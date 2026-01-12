@@ -1,0 +1,13 @@
+.env
+.env.*
+config.yaml
+config/config.yaml
+test-output
+pgstore
+var/
+static/
+.DS_Store
+logs/
+AGENTS.md
+bin/
+internal/webui/dist
