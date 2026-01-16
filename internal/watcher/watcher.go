@@ -812,7 +812,7 @@ func (w *dbWatcher) pollPayloadRules(ctx context.Context, force bool) {
 
 	payloadSame := (!payloadHasLatest && !w.payloadHasLatest) ||
 		(payloadHasLatest && w.payloadHasLatest && payloadAt.Equal(w.payloadLatestAt) && payloadID == w.payloadLatestID)
-	payloadCountSame := payloadHasCount && w.payloadHasCount && payloadCount == w.payloadCount
+	payloadCountSame := w.payloadHasCount && payloadCount == w.payloadCount
 	mappingSame := (!mappingHasLatest && !w.mappingHasLatest) ||
 		(mappingHasLatest && w.mappingHasLatest && mappingAt.Equal(w.mappingLatestAt) && mappingID == w.mappingLatestID)
 
@@ -876,8 +876,8 @@ func (w *dbWatcher) pollPayloadRules(ctx context.Context, force bool) {
 		next := *cfg
 		next.Payload = payloadConfig
 		if oauthMappingsLoaded {
-			next.OAuthModelMappings = oauthModelMappings
-			next.SanitizeOAuthModelMappings()
+			next.OAuthModelAlias = oauthModelMappings
+			next.SanitizeOAuthModelAlias()
 		}
 		w.cfgMu.Lock()
 		w.cfg = &next
@@ -960,12 +960,12 @@ func buildPayloadConfig(rows []payloadRuleRow) sdkconfig.PayloadConfig {
 	}
 }
 
-func buildOAuthModelMappings(rows []models.ModelMapping) map[string][]sdkconfig.ModelNameMapping {
+func buildOAuthModelMappings(rows []models.ModelMapping) map[string][]sdkconfig.OAuthModelAlias {
 	if len(rows) == 0 {
 		return nil
 	}
 
-	out := make(map[string][]sdkconfig.ModelNameMapping)
+	out := make(map[string][]sdkconfig.OAuthModelAlias)
 	seen := make(map[string]struct{})
 
 	for i := range rows {
@@ -984,7 +984,7 @@ func buildOAuthModelMappings(rows []models.ModelMapping) map[string][]sdkconfig.
 			continue
 		}
 		seen[key] = struct{}{}
-		out[provider] = append(out[provider], sdkconfig.ModelNameMapping{
+		out[provider] = append(out[provider], sdkconfig.OAuthModelAlias{
 			Name:  name,
 			Alias: alias,
 			Fork:  row.Fork,

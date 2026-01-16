@@ -521,7 +521,7 @@ func (h *ProviderAPIKeyHandler) syncSDKConfig(ctx context.Context) error {
 	cfg.CodexKey = codexKeys
 	cfg.ClaudeKey = claudeKeys
 	cfg.OpenAICompatibility = openAIProviders
-	cfg.OAuthModelMappings = buildOAuthModelMappings(mappingRows)
+	cfg.OAuthModelAlias = buildOAuthModelMappings(mappingRows)
 
 	cfg.SanitizeGeminiKeys()
 	cfg.SanitizeCodexKeys()
@@ -532,12 +532,12 @@ func (h *ProviderAPIKeyHandler) syncSDKConfig(ctx context.Context) error {
 }
 
 // buildOAuthModelMappings converts model mappings into SDK config entries.
-func buildOAuthModelMappings(rows []models.ModelMapping) map[string][]sdkconfig.ModelNameMapping {
+func buildOAuthModelMappings(rows []models.ModelMapping) map[string][]sdkconfig.OAuthModelAlias {
 	if len(rows) == 0 {
 		return nil
 	}
 
-	out := make(map[string][]sdkconfig.ModelNameMapping)
+	out := make(map[string][]sdkconfig.OAuthModelAlias)
 	seen := make(map[string]struct{})
 
 	for i := range rows {
@@ -553,7 +553,7 @@ func buildOAuthModelMappings(rows []models.ModelMapping) map[string][]sdkconfig.
 			continue
 		}
 		seen[key] = struct{}{}
-		out[provider] = append(out[provider], sdkconfig.ModelNameMapping{
+		out[provider] = append(out[provider], sdkconfig.OAuthModelAlias{
 			Name:  name,
 			Alias: alias,
 			Fork:  row.Fork,
