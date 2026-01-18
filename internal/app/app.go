@@ -140,6 +140,7 @@ func RunServer(ctx context.Context, cfg config.AppConfig, defaultPort int) error
 		WithCoreAuthManager(coreManager).
 		WithServerOptions(
 			sdkapi.WithMiddleware(
+				corsMiddleware(),
 				func(c *gin.Context) {
 					if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
 						return

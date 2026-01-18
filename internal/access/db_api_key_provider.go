@@ -187,6 +187,9 @@ func extractToken(r *http.Request, header string, scheme string, allowXAPIKey bo
 		if v := strings.TrimSpace(r.Header.Get("X-API-Key")); v != "" {
 			return v
 		}
+		if v := strings.TrimSpace(r.Header.Get("X-Goog-Api-Key")); v != "" {
+			return v
+		}
 	}
 	if r.URL != nil && strings.HasPrefix(r.URL.Path, "/v1beta") {
 		if v := strings.TrimSpace(r.URL.Query().Get("key")); v != "" {

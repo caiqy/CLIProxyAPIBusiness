@@ -313,23 +313,6 @@ func upsertSiteNameSetting(conn *gorm.DB, siteName string) error {
 // ErrInitCompleted signals that initialization finished and the server should restart.
 var ErrInitCompleted = fmt.Errorf("init completed")
 
-// corsMiddleware enables permissive CORS for the init server.
-func corsMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-API-Key")
-		c.Header("Access-Control-Max-Age", "86400")
-
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(http.StatusNoContent)
-			return
-		}
-
-		c.Next()
-	}
-}
-
 // RunInitServer starts the initialization server when config is missing.
 func RunInitServer(ctx context.Context, cfg config.AppConfig, port int) error {
 	gin.SetMode(gin.ReleaseMode)
