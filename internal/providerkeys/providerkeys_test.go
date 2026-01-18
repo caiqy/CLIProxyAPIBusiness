@@ -45,7 +45,7 @@ func TestApplyToConfig_Gemini(t *testing.T) {
 	}
 }
 
-func TestApplyToConfig_OAuthModelMappings(t *testing.T) {
+func TestApplyToConfig_OAuthModelAlias(t *testing.T) {
 	rows := []models.ModelMapping{
 		{Provider: "claude", ModelName: "claude-sonnet", NewModelName: "sonnet", Fork: true, IsEnabled: true},
 	}
@@ -53,7 +53,7 @@ func TestApplyToConfig_OAuthModelMappings(t *testing.T) {
 	cfg := &sdkconfig.Config{}
 	ApplyToConfig(cfg, nil, rows)
 
-	mappings := cfg.OAuthModelMappings["claude"]
+	mappings := cfg.OAuthModelAlias["claude"]
 	if len(mappings) != 1 {
 		t.Fatalf("expected 1 mapping, got %d", len(mappings))
 	}

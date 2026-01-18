@@ -75,6 +75,31 @@ func (h *Hook) OnModelsRegistered(ctx context.Context, provider, clientID string
 		lowerNames = append(lowerNames, modelKey)
 	}
 
+	// Avoid auto-seeding identity mappings for models that are already used as aliases.
+	// Otherwise, the auto-seeded row (alias -> alias) can override selector/rate-limit/user-group
+	// settings that are keyed by NewModelName in higher-level logic.
+	aliasKeys := make(map[string]struct{})
+	var existingAliases []models.ModelMapping
+	errFindAliases := h.db.WithContext(ctx).
+		Model(&models.ModelMapping{}).
+		Select("provider", "model_name", "new_model_name").
+		Where("provider = ?", normalizedProvider).
+		Where("is_enabled = ?", true).
+		Where("LOWER(new_model_name) IN ?", lowerNames).
+		Where("LOWER(model_name) <> LOWER(new_model_name)").
+		Find(&existingAliases).Error
+	if errFindAliases != nil {
+		log.WithError(errFindAliases).Warn("model registry hook load existing model alias mappings failed")
+		return
+	}
+	for _, row := range existingAliases {
+		alias := strings.ToLower(strings.TrimSpace(row.NewModelName))
+		if alias == "" {
+			continue
+		}
+		aliasKeys[alias] = struct{}{}
+	}
+
 	var existing []models.ModelMapping
 	errFind := h.db.WithContext(ctx).
 		Model(&models.ModelMapping{}).
@@ -100,6 +125,9 @@ func (h *Hook) OnModelsRegistered(ctx context.Context, provider, clientID string
 	now := time.Now().UTC()
 	toCreate := make([]models.ModelMapping, 0)
 	for modelKey, modelName := range uniqueModels {
+		if _, isAlias := aliasKeys[modelKey]; isAlias {
+			continue
+		}
 		if _, exists := existingKeys[normalizedProvider+"\x00"+modelKey]; exists {
 			continue
 		}

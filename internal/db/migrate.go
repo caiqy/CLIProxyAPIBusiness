@@ -1047,6 +1047,8 @@ func preMigrateAuthGroupIDsPostgres(conn *gorm.DB) error {
 				AND column_name = 'auth_group_id'
 				AND data_type <> 'jsonb'
 			) THEN
+				ALTER TABLE auths DROP CONSTRAINT IF EXISTS fk_auth_groups_auths;
+				ALTER TABLE auths DROP CONSTRAINT IF EXISTS fk_auths_auth_group;
 				ALTER TABLE auths
 					ALTER COLUMN auth_group_id TYPE jsonb
 					USING CASE

@@ -13,6 +13,11 @@ type selectorEntry struct {
 	selector     int
 	rateLimit    int
 	userGroupIDs models.UserGroupIDs
+
+	// explicitAlias indicates this entry maps a model name to a different exposed alias.
+	// It is used to prevent auto-seeded identity mappings (alias -> alias) from overriding
+	// explicit mappings when selecting settings by NewModelName.
+	explicitAlias bool
 }
 
 type modelAliasEntry struct {
@@ -51,22 +56,36 @@ func StoreModelMappings(updatedAt time.Time, rows []models.ModelMapping) {
 		if provider == "" {
 			continue
 		}
+		name := strings.TrimSpace(row.ModelName)
+		alias := strings.TrimSpace(row.NewModelName)
 		allowedUserGroups := row.UserGroupID.Clean()
-		if alias := strings.TrimSpace(row.NewModelName); alias != "" {
+		if alias != "" {
 			key := makeKey(provider, alias)
-			if prev, ok := nextNew[key]; !ok || row.ID > prev.id {
-				nextNew[key] = selectorEntry{id: row.ID, selector: row.Selector, rateLimit: row.RateLimit, userGroupIDs: allowedUserGroups}
+			explicitAlias := name != "" && !strings.EqualFold(name, alias)
+			if prev, ok := nextNew[key]; !ok || (explicitAlias && !prev.explicitAlias) || (explicitAlias == prev.explicitAlias && row.ID > prev.id) {
+				nextNew[key] = selectorEntry{
+					id:            row.ID,
+					selector:      row.Selector,
+					rateLimit:     row.RateLimit,
+					userGroupIDs:  allowedUserGroups,
+					explicitAlias: explicitAlias,
+				}
 			}
 		}
-		if name := strings.TrimSpace(row.ModelName); name != "" {
+		if name != "" {
 			key := makeKey(provider, name)
 			if prev, ok := nextModel[key]; !ok || row.ID > prev.id {
-				nextModel[key] = selectorEntry{id: row.ID, selector: row.Selector, rateLimit: row.RateLimit, userGroupIDs: allowedUserGroups}
+				nextModel[key] = selectorEntry{
+					id:           row.ID,
+					selector:     row.Selector,
+					rateLimit:    row.RateLimit,
+					userGroupIDs: allowedUserGroups,
+				}
 			}
 		}
 
-		if name := strings.TrimSpace(row.ModelName); name != "" {
-			if alias := strings.TrimSpace(row.NewModelName); alias != "" {
+		if name != "" {
+			if alias != "" {
 				key := makeLowerKey(provider, name)
 				if prev, ok := nextAlias[key]; !ok || row.ID > prev.id {
 					nextAlias[key] = modelAliasEntry{id: row.ID, alias: alias}
