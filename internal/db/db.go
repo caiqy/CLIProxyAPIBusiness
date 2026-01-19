@@ -3,8 +3,8 @@ package db
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,23 +26,16 @@ type tzConfig struct {
 	scanLocation *time.Location
 }
 
-type recordNotFoundSilencer struct {
-	logger.Interface
-}
-
-func (l recordNotFoundSilencer) LogMode(level logger.LogLevel) logger.Interface {
-	return recordNotFoundSilencer{Interface: l.Interface.LogMode(level)}
-}
-
-func (l recordNotFoundSilencer) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
-	if err != nil && errors.Is(err, gorm.ErrRecordNotFound) {
-		return
-	}
-	l.Interface.Trace(ctx, begin, fc, err)
-}
-
 func init() {
-	logger.Default = recordNotFoundSilencer{Interface: logger.Default}
+	logger.Default = logger.New(
+		log.New(os.Stdout, "\r\n", log.LstdFlags),
+		logger.Config{
+			SlowThreshold:             0,
+			LogLevel:                  logger.Warn,
+			IgnoreRecordNotFoundError: true,
+			Colorful:                  true,
+		},
+	)
 }
 
 func newGormLogger() logger.Interface {

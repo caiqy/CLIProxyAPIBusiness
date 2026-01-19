@@ -102,7 +102,7 @@ func loadUserRateLimit(ctx context.Context, db *gorm.DB, userID uint64) (int, *u
 	}
 	type userRow struct {
 		RateLimit   int
-		UserGroupID *uint64
+		UserGroupID models.UserGroupIDs `gorm:"column:user_group_id"`
 	}
 	var row userRow
 	if errFind := db.WithContext(ctx).
@@ -115,7 +115,7 @@ func loadUserRateLimit(ctx context.Context, db *gorm.DB, userID uint64) (int, *u
 		}
 		return 0, nil, errFind
 	}
-	return row.RateLimit, row.UserGroupID, nil
+	return row.RateLimit, row.UserGroupID.Primary(), nil
 }
 
 func loadUserGroupRateLimit(ctx context.Context, db *gorm.DB, groupID uint64) (int, error) {
