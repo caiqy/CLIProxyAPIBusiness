@@ -32,6 +32,7 @@ func StoreReferences(ctx context.Context, db *gorm.DB, refs []models.ModelRefere
 			if err := tx.Clauses(clause.OnConflict{
 				Columns: []clause.Column{{Name: "provider_name"}, {Name: "model_name"}},
 				DoUpdates: clause.AssignmentColumns([]string{
+					"model_id",
 					"context_limit",
 					"output_limit",
 					"input_price",

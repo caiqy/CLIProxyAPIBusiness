@@ -10,6 +10,7 @@ import (
 type ModelReference struct {
 	ProviderName string `gorm:"type:varchar(255);not null;primaryKey;index"` // Provider display name.
 	ModelName    string `gorm:"type:varchar(255);not null;primaryKey;index"` // Model display name.
+	ModelID      string `gorm:"type:varchar(255);index"`                     // Model ID from remote payload.
 
 	ContextLimit int `gorm:"not null;default:0"` // Max context length.
 	OutputLimit  int `gorm:"not null;default:0"` // Max output tokens.

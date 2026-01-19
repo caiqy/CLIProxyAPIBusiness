@@ -173,6 +173,9 @@ func RegisterAdminRoutes(r *gin.Engine, db *gorm.DB, jwtCfg config.JWTConfig, co
 	authed.PUT("/model-mappings/:id/payload-rules/:rule_id", payloadRuleHandler.Update)
 	authed.DELETE("/model-mappings/:id/payload-rules/:rule_id", payloadRuleHandler.Delete)
 
+	modelReferenceHandler := handlers.NewModelReferenceHandler(db)
+	authed.GET("/model-references/price", modelReferenceHandler.GetPrice)
+
 	logsHandler := handlers.NewAdminLogsHandler(db)
 	authed.GET("/logs", logsHandler.List)
 	authed.GET("/logs/detail", logsHandler.Detail)

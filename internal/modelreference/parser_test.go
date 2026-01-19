@@ -31,6 +31,9 @@ func TestParseModelsPayload_FallbacksAndExtras(t *testing.T) {
 	if refA == nil {
 		t.Fatalf("expected Model A reference")
 	}
+	if refA.ModelID != "model-a" {
+		t.Fatalf("expected model id from payload id")
+	}
 	if refA.ContextLimit != 8000 || refA.OutputLimit != 2048 {
 		t.Fatalf("unexpected limits: context=%d output=%d", refA.ContextLimit, refA.OutputLimit)
 	}
@@ -66,6 +69,9 @@ func TestParseModelsPayload_FallbacksAndExtras(t *testing.T) {
 	if refB == nil {
 		t.Fatalf("expected fallback name for model-b")
 	}
+	if refB.ModelID != "model-b" {
+		t.Fatalf("expected model id fallback to key")
+	}
 	if refB.InputPrice == nil || *refB.InputPrice != 0.3 {
 		t.Fatalf("unexpected input price for model-b")
 	}
@@ -94,5 +100,25 @@ func TestParseModelsPayload_MergesDuplicateDisplayNames(t *testing.T) {
 	}
 	if ref.ContextLimit != 4096 {
 		t.Fatalf("unexpected context limit")
+	}
+}
+
+func TestParseModelsPayload_TrimModelIDPrefix(t *testing.T) {
+	payload := []byte(`{"provider-x":{"name":"Provider X","models":{"model-a":{"name":"Gemini 3 Pro Image","id":"google/gemini-3-pro-image","cost":{"input":0.1}}}}}`)
+
+	refs, err := ParseModelsPayload(payload)
+	if err != nil {
+		t.Fatalf("parse payload: %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("expected 1 ref, got %d", len(refs))
+	}
+
+	ref := findReference(refs, "Provider X", "Gemini 3 Pro Image")
+	if ref == nil {
+		t.Fatalf("expected Gemini 3 Pro Image reference")
+	}
+	if ref.ModelID != "gemini-3-pro-image" {
+		t.Fatalf("expected trimmed model id, got %q", ref.ModelID)
 	}
 }

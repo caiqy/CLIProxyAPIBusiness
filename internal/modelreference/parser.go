@@ -16,6 +16,7 @@ type providerPayload struct {
 }
 
 type modelPayload struct {
+	ID    string      `json:"id"`
 	Name  string      `json:"name"`
 	Cost  *modelCost  `json:"cost"`
 	Limit *modelLimit `json:"limit"`
@@ -136,6 +137,20 @@ func ParseModelsPayload(data []byte) ([]models.ModelReference, error) {
 				continue
 			}
 
+			modelIDValue := strings.TrimSpace(model.ID)
+			if modelIDValue == "" {
+				modelIDValue = strings.TrimSpace(modelID)
+			}
+			if slashIndex := strings.LastIndex(modelIDValue, "/"); slashIndex >= 0 {
+				trimmed := strings.TrimSpace(modelIDValue[slashIndex+1:])
+				if trimmed != "" {
+					modelIDValue = trimmed
+				}
+			}
+			if modelIDValue == "" {
+				continue
+			}
+
 			contextLimit := 0
 			outputLimit := 0
 			if model.Limit != nil {
@@ -171,6 +186,7 @@ func ParseModelsPayload(data []byte) ([]models.ModelReference, error) {
 			ref := models.ModelReference{
 				ProviderName: providerName,
 				ModelName:    modelName,
+				ModelID:      modelIDValue,
 				ContextLimit: contextLimit,
 				OutputLimit:  outputLimit,
 				Extra:        extra,
@@ -257,6 +273,9 @@ func mergeModelReference(base, incoming models.ModelReference) (models.ModelRefe
 	}
 	if base.OutputLimit == 0 && incoming.OutputLimit != 0 {
 		base.OutputLimit = incoming.OutputLimit
+	}
+	if base.ModelID == "" && incoming.ModelID != "" {
+		base.ModelID = incoming.ModelID
 	}
 	if base.InputPrice == nil {
 		base.InputPrice = incoming.InputPrice

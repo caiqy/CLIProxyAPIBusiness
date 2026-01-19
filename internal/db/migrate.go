@@ -306,6 +306,12 @@ func migratePostgres(conn *gorm.DB) error {
 	`).Error; errUserPasskeyBackupStateAdd != nil {
 		return fmt.Errorf("db: add user passkey backup state: %w", errUserPasskeyBackupStateAdd)
 	}
+	if errModelIDAdd := conn.Exec(`
+		ALTER TABLE models
+		ADD COLUMN IF NOT EXISTS model_id varchar(255)
+	`).Error; errModelIDAdd != nil {
+		return fmt.Errorf("db: add models model_id: %w", errModelIDAdd)
+	}
 
 	_ = conn.Exec(`CREATE EXTENSION IF NOT EXISTS pg_trgm`).Error
 
@@ -362,6 +368,20 @@ func migratePostgres(conn *gorm.DB) error {
 			sql: `
 				CREATE INDEX IF NOT EXISTS idx_models_model_name
 				ON models (model_name)
+			`,
+		},
+		{
+			name: "idx_models_model_id",
+			sql: `
+				CREATE INDEX IF NOT EXISTS idx_models_model_id
+				ON models (model_id)
+			`,
+		},
+		{
+			name: "idx_models_provider_model_id",
+			sql: `
+				CREATE INDEX IF NOT EXISTS idx_models_provider_model_id
+				ON models (provider_name, model_id)
 			`,
 		},
 		{
@@ -683,6 +703,28 @@ func migratePostgres(conn *gorm.DB) error {
 			`,
 		},
 		{
+			name: "idx_models_model_id",
+			trgmSQL: `
+				CREATE INDEX IF NOT EXISTS idx_models_model_id_trgm
+				ON models USING gin (model_id gin_trgm_ops)
+			`,
+			lowerSQL: `
+				CREATE INDEX IF NOT EXISTS idx_models_model_id_lower
+				ON models (LOWER(model_id))
+			`,
+		},
+		{
+			name: "idx_models_provider_model_id",
+			trgmSQL: `
+				CREATE INDEX IF NOT EXISTS idx_models_provider_model_id_trgm
+				ON models USING gin ((provider_name || ' ' || model_id) gin_trgm_ops)
+			`,
+			lowerSQL: `
+				CREATE INDEX IF NOT EXISTS idx_models_provider_model_id_lower
+				ON models (LOWER(provider_name), LOWER(model_id))
+			`,
+		},
+		{
 			name: "idx_prepaid_cards_name",
 			trgmSQL: `
 				CREATE INDEX IF NOT EXISTS idx_prepaid_cards_name_trgm
@@ -803,6 +845,15 @@ func migrateSQLite(conn *gorm.DB) error {
 		&models.Setting{},
 	); errAutoMigrate != nil {
 		return fmt.Errorf("db: migrate: %w", errAutoMigrate)
+	}
+	migrator := conn.Migrator()
+	if migrator != nil && migrator.HasTable(&models.ModelReference{}) && !migrator.HasColumn(&models.ModelReference{}, "model_id") {
+		if errModelIDAdd := conn.Exec(`
+			ALTER TABLE models
+			ADD COLUMN model_id varchar(255)
+		`).Error; errModelIDAdd != nil {
+			return fmt.Errorf("db: add models model_id: %w", errModelIDAdd)
+		}
 	}
 	if errSeed := ensureDefaultGroups(conn); errSeed != nil {
 		return errSeed
