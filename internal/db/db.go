@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,12 +17,36 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // tzConfig holds timezone configuration for database connections.
 type tzConfig struct {
 	dbTimeZone   string
 	scanLocation *time.Location
+}
+
+type recordNotFoundSilencer struct {
+	logger.Interface
+}
+
+func (l recordNotFoundSilencer) LogMode(level logger.LogLevel) logger.Interface {
+	return recordNotFoundSilencer{Interface: l.Interface.LogMode(level)}
+}
+
+func (l recordNotFoundSilencer) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
+	if err != nil && errors.Is(err, gorm.ErrRecordNotFound) {
+		return
+	}
+	l.Interface.Trace(ctx, begin, fc, err)
+}
+
+func init() {
+	logger.Default = recordNotFoundSilencer{Interface: logger.Default}
+}
+
+func newGormLogger() logger.Interface {
+	return logger.Default
 }
 
 // Global timezone cache and initializer for DB connections.
@@ -79,7 +104,9 @@ func openPostgres(dsn string) (*gorm.DB, error) {
 		return nil, err
 	}
 
-	conn, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{})
+	conn, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{
+		Logger: newGormLogger(),
+	})
 	if err != nil {
 		_ = sqlDB.Close()
 		return nil, fmt.Errorf("db: open: %w", err)
@@ -107,7 +134,9 @@ func openSQLite(dsn string) (*gorm.DB, error) {
 		return nil, errEnsure
 	}
 
-	conn, err := gorm.Open(sqlite.Open(normalized), &gorm.Config{})
+	conn, err := gorm.Open(sqlite.Open(normalized), &gorm.Config{
+		Logger: newGormLogger(),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("db: open sqlite: %w", err)
 	}

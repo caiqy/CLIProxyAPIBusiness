@@ -742,23 +742,20 @@ func (w *dbWatcher) pollPayloadRules(ctx context.Context, force bool) {
 
 	var latestPayload latestRow
 	payloadHasLatest := false
-	errPayload := w.db.WithContext(qctx).
+	resultPayload := w.db.WithContext(qctx).
 		Model(&models.ModelPayloadRule{}).
 		Select("id", "updated_at").
 		Order("updated_at DESC, id DESC").
 		Limit(1).
-		Take(&latestPayload).Error
-	if errPayload != nil {
-		if errors.Is(errPayload, context.Canceled) {
+		Find(&latestPayload)
+	if errPayloadFind := resultPayload.Error; errPayloadFind != nil {
+		if errors.Is(errPayloadFind, context.Canceled) {
 			return
 		}
-		if errors.Is(errPayload, gorm.ErrRecordNotFound) {
-			payloadHasLatest = false
-		} else {
-			log.WithError(errPayload).Warn("db watcher: query payload rules latest row failed")
-			return
-		}
-	} else {
+		log.WithError(errPayloadFind).Warn("db watcher: query payload rules latest row failed")
+		return
+	}
+	if resultPayload.RowsAffected > 0 {
 		payloadHasLatest = true
 	}
 
