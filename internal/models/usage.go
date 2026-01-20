@@ -2,6 +2,8 @@ package models
 
 import (
 	"time"
+
+	"gorm.io/datatypes"
 )
 
 // Usage records metering data for a single request.
@@ -22,6 +24,9 @@ type Usage struct {
 
 	RequestedAt time.Time `gorm:"not null;index"`         // Request timestamp.
 	Failed      bool      `gorm:"not null;default:false"` // Failure flag.
+
+	ErrorStatusCode *int           `gorm:"index"`      // HTTP status code for failed requests.
+	ErrorDetail     datatypes.JSON `gorm:"type:jsonb"` // Structured error detail JSON.
 
 	InputTokens     int64 `gorm:"not null;default:0"` // Input token count.
 	OutputTokens    int64 `gorm:"not null;default:0"` // Output token count.

@@ -71,6 +71,18 @@ func migratePostgres(conn *gorm.DB) error {
 	); errAutoMigrate != nil {
 		return fmt.Errorf("db: migrate: %w", errAutoMigrate)
 	}
+	if errUsageErrorStatus := conn.Exec(`
+		ALTER TABLE usages
+		ADD COLUMN IF NOT EXISTS error_status_code integer
+	`).Error; errUsageErrorStatus != nil {
+		return fmt.Errorf("db: add usage error status: %w", errUsageErrorStatus)
+	}
+	if errUsageErrorDetail := conn.Exec(`
+		ALTER TABLE usages
+		ADD COLUMN IF NOT EXISTS error_detail jsonb
+	`).Error; errUsageErrorDetail != nil {
+		return fmt.Errorf("db: add usage error detail: %w", errUsageErrorDetail)
+	}
 	if errSeed := ensureDefaultGroups(conn); errSeed != nil {
 		return errSeed
 	}
@@ -853,6 +865,22 @@ func migrateSQLite(conn *gorm.DB) error {
 			ADD COLUMN model_id varchar(255)
 		`).Error; errModelIDAdd != nil {
 			return fmt.Errorf("db: add models model_id: %w", errModelIDAdd)
+		}
+	}
+	if migrator != nil && !migrator.HasColumn(&models.Usage{}, "error_status_code") {
+		if errUsageErrorStatus := conn.Exec(`
+			ALTER TABLE usages
+			ADD COLUMN error_status_code integer
+		`).Error; errUsageErrorStatus != nil {
+			return fmt.Errorf("db: add usage error status: %w", errUsageErrorStatus)
+		}
+	}
+	if migrator != nil && !migrator.HasColumn(&models.Usage{}, "error_detail") {
+		if errUsageErrorDetail := conn.Exec(`
+			ALTER TABLE usages
+			ADD COLUMN error_detail json
+		`).Error; errUsageErrorDetail != nil {
+			return fmt.Errorf("db: add usage error detail: %w", errUsageErrorDetail)
 		}
 	}
 	if errSeed := ensureDefaultGroups(conn); errSeed != nil {

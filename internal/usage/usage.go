@@ -1,9 +1,12 @@
 package usage
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +19,7 @@ import (
 	"github.com/gin-gonic/gin"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/usage"
 	log "github.com/sirupsen/logrus"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -87,6 +91,8 @@ func (p *GormUsagePlugin) HandleUsage(ctx context.Context, record coreusage.Reco
 	costMicros := calculateCost(dbCtx, p.db, apiKeyID, userID, authID, billingUserGroupID, recordForBilling)
 	amountToDeduct := float64(costMicros) / 1_000_000
 
+	errorStatusCode, errorDetail := buildUsageErrorDetail(ctx, record)
+
 	row := models.Usage{
 		Provider:        provider,
 		Model:           model,
@@ -99,6 +105,8 @@ func (p *GormUsagePlugin) HandleUsage(ctx context.Context, record coreusage.Reco
 		Source:          strings.TrimSpace(record.Source),
 		RequestedAt:     normalizeTime(record.RequestedAt),
 		Failed:          record.Failed,
+		ErrorStatusCode: errorStatusCode,
+		ErrorDetail:     errorDetail,
 		InputTokens:     record.Detail.InputTokens,
 		OutputTokens:    record.Detail.OutputTokens,
 		ReasoningTokens: record.Detail.ReasoningTokens,
@@ -389,6 +397,106 @@ func accessMetadataFromContext(ctx context.Context) map[string]string {
 		out[k] = val
 	}
 	return out
+}
+
+type usageErrorDetail struct {
+	StatusCode   int    `json:"status_code"`
+	Message      string `json:"message"`
+	ResponseBody any    `json:"response_body,omitempty"`
+}
+
+func buildUsageErrorDetail(ctx context.Context, record coreusage.Record) (*int, datatypes.JSON) {
+	statusCode, hasStatus, responseBody := extractUsageErrorContext(ctx)
+	failed := record.Failed
+	if !failed && (!hasStatus || statusCode < http.StatusBadRequest) {
+		return nil, nil
+	}
+	if !hasStatus || statusCode == 0 {
+		statusCode = http.StatusInternalServerError
+	}
+
+	message := extractErrorMessage(responseBody)
+	if message == "" {
+		message = strings.TrimSpace(http.StatusText(statusCode))
+	}
+
+	detail := usageErrorDetail{
+		StatusCode: statusCode,
+		Message:    message,
+	}
+	if len(responseBody) > 0 {
+		if json.Valid(responseBody) {
+			detail.ResponseBody = json.RawMessage(responseBody)
+		} else {
+			detail.ResponseBody = string(responseBody)
+		}
+	}
+
+	payload, errMarshal := json.Marshal(detail)
+	if errMarshal != nil {
+		return nil, nil
+	}
+	statusValue := statusCode
+	return &statusValue, datatypes.JSON(payload)
+}
+
+func extractUsageErrorContext(ctx context.Context) (int, bool, []byte) {
+	if ctx == nil {
+		return 0, false, nil
+	}
+	ginCtx, ok := ctx.Value("gin").(*gin.Context)
+	if !ok || ginCtx == nil {
+		return 0, false, nil
+	}
+	statusCode := ginCtx.Writer.Status()
+	if statusCode == 0 {
+		return 0, false, extractAPIResponse(ginCtx)
+	}
+	return statusCode, true, extractAPIResponse(ginCtx)
+}
+
+func extractAPIResponse(ctx *gin.Context) []byte {
+	if ctx == nil {
+		return nil
+	}
+	if v, exists := ctx.Get("API_RESPONSE"); exists {
+		switch value := v.(type) {
+		case []byte:
+			return bytes.Clone(value)
+		case string:
+			return []byte(value)
+		}
+	}
+	return nil
+}
+
+func extractErrorMessage(responseBody []byte) string {
+	trimmed := strings.TrimSpace(string(responseBody))
+	if trimmed == "" {
+		return ""
+	}
+	if !json.Valid([]byte(trimmed)) {
+		return trimmed
+	}
+
+	var payload map[string]any
+	if errUnmarshal := json.Unmarshal([]byte(trimmed), &payload); errUnmarshal != nil {
+		return ""
+	}
+	if errValue, ok := payload["error"]; ok {
+		switch typed := errValue.(type) {
+		case map[string]any:
+			if msg, ok := typed["message"].(string); ok {
+				return strings.TrimSpace(msg)
+			}
+		case string:
+			return strings.TrimSpace(typed)
+		}
+	}
+	if msg, ok := payload["message"].(string); ok {
+		return strings.TrimSpace(msg)
+	}
+	return ""
 }
 
 // normalizeTime returns a UTC timestamp, defaulting to now if zero.
