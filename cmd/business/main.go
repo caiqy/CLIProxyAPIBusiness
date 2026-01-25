@@ -11,9 +11,15 @@ import (
 	_ "github.com/router-for-me/CLIProxyAPI/v6/sdk/translator/builtin"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/app"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/config"
+	"github.com/router-for-me/CLIProxyAPIBusiness/internal/logging"
 
 	log "github.com/sirupsen/logrus"
 )
+
+// init initializes the shared logger setup.
+func init() {
+	logging.SetupBaseLogger()
+}
 
 // main runs the CLI entrypoint and exits on unrecoverable command errors.
 func main() {

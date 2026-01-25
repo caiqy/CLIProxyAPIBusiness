@@ -20,6 +20,7 @@ import (
 	relayhttp "github.com/router-for-me/CLIProxyAPIBusiness/internal/http"
 	internalhttp "github.com/router-for-me/CLIProxyAPIBusiness/internal/http/api/admin"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/http/api/front"
+	"github.com/router-for-me/CLIProxyAPIBusiness/internal/logging"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/modelreference"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/modelregistry"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/quota"
@@ -131,6 +132,11 @@ func RunServer(ctx context.Context, cfg config.AppConfig, defaultPort int) error
 	serverAccessMgr := sdkaccess.NewManager()
 
 	coreManager := coreauth.NewManager(authStore, internalauth.NewSelector(conn), internalauth.NewStatusCodeHook())
+
+	if errLog := logging.ConfigureLogOutput(coreCfg); errLog != nil {
+		return fmt.Errorf("configure logging: %w", errLog)
+	}
+
 	distFS := webBundle.DistFS
 	fileServer := http.FileServer(http.FS(distFS))
 	builder := sdkcliproxy.NewBuilder().
@@ -141,6 +147,8 @@ func RunServer(ctx context.Context, cfg config.AppConfig, defaultPort int) error
 		WithCoreAuthManager(coreManager).
 		WithServerOptions(
 			sdkapi.WithMiddleware(
+				logging.GinLogrusRecovery(),
+				logging.GinLogrusLogger(),
 				corsMiddleware(),
 				func(c *gin.Context) {
 					if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
