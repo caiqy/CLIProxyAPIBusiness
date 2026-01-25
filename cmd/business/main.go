@@ -10,19 +10,31 @@ import (
 
 	_ "github.com/router-for-me/CLIProxyAPI/v6/sdk/translator/builtin"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/app"
+	"github.com/router-for-me/CLIProxyAPIBusiness/internal/buildinfo"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/config"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/logging"
 
 	log "github.com/sirupsen/logrus"
 )
 
+var (
+	Version   = "dev"
+	Commit    = "none"
+	BuildDate = "unknown"
+)
+
 // init initializes the shared logger setup.
 func init() {
 	logging.SetupBaseLogger()
+	buildinfo.Version = Version
+	buildinfo.Commit = Commit
+	buildinfo.BuildDate = BuildDate
 }
 
 // main runs the CLI entrypoint and exits on unrecoverable command errors.
 func main() {
+	fmt.Printf("CLIProxyAPIBusiness Version: %s, Commit: %s, BuiltAt: %s\n", buildinfo.Version, buildinfo.Commit, buildinfo.BuildDate)
+
 	if errRun := run(context.Background(), os.Args[1:]); errRun != nil {
 		log.WithError(errRun).Error("command failed")
 		os.Exit(1)

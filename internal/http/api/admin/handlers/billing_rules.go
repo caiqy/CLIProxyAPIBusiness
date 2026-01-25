@@ -408,3 +408,143 @@ func (h *BillingRuleHandler) formatRule(rule *models.BillingRule) gin.H {
 		"updated_at":               rule.UpdatedAt,
 	}
 }
+
+// batchImportRequest captures the payload for batch importing billing rules.
+type batchImportRequest struct {
+	AuthGroupID uint64 `json:"auth_group_id"` // Auth group ID.
+	UserGroupID uint64 `json:"user_group_id"` // User group ID.
+	BillingType int    `json:"billing_type"`  // Billing type.
+}
+
+// BatchImport imports billing rules for all enabled model mappings.
+func (h *BillingRuleHandler) BatchImport(c *gin.Context) {
+	var body batchImportRequest
+	if errBind := c.ShouldBindJSON(&body); errBind != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid json"})
+		return
+	}
+
+	if body.AuthGroupID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "auth_group_id is required"})
+		return
+	}
+	if body.UserGroupID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_group_id is required"})
+		return
+	}
+	billingType := models.BillingType(body.BillingType)
+	if billingType != models.BillingTypePerRequest && billingType != models.BillingTypePerToken {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "billing_type must be 1 (per_request) or 2 (per_token)"})
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	var mappings []models.ModelMapping
+	if errFind := h.db.WithContext(ctx).Where("is_enabled = ?", true).Find(&mappings).Error; errFind != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load model mappings"})
+		return
+	}
+
+	if len(mappings) == 0 {
+		c.JSON(http.StatusOK, gin.H{"created": 0, "updated": 0})
+		return
+	}
+
+	var modelRefs []models.ModelReference
+	if errRefs := h.db.WithContext(ctx).Find(&modelRefs).Error; errRefs != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load model references"})
+		return
+	}
+	refByModelID := make(map[string]*models.ModelReference, len(modelRefs))
+	refByModelName := make(map[string]*models.ModelReference, len(modelRefs))
+	for i := range modelRefs {
+		if modelRefs[i].ModelID != "" {
+			refByModelID[modelRefs[i].ModelID] = &modelRefs[i]
+		}
+		refByModelName[modelRefs[i].ModelName] = &modelRefs[i]
+	}
+
+	now := time.Now().UTC()
+	var created, updated int
+
+	for _, mapping := range mappings {
+		provider := mapping.Provider
+		model := mapping.NewModelName
+
+		var existing models.BillingRule
+		errExist := h.db.WithContext(ctx).
+			Where("auth_group_id = ? AND user_group_id = ? AND provider = ? AND model = ?",
+				body.AuthGroupID, body.UserGroupID, provider, model).
+			First(&existing).Error
+
+		var pricePerRequest *float64
+		var priceInputToken, priceOutputToken, priceCacheCreate, priceCacheRead *float64
+
+		if billingType == models.BillingTypePerToken {
+			var ref *models.ModelReference
+			if r, ok := refByModelID[mapping.NewModelName]; ok {
+				ref = r
+			} else if r, ok := refByModelName[mapping.NewModelName]; ok {
+				ref = r
+			} else if r, ok := refByModelID[mapping.ModelName]; ok {
+				ref = r
+			} else if r, ok := refByModelName[mapping.ModelName]; ok {
+				ref = r
+			}
+
+			if ref != nil {
+				priceInputToken = ref.InputPrice
+				priceOutputToken = ref.OutputPrice
+				priceCacheCreate = ref.CacheWritePrice
+				priceCacheRead = ref.CacheReadPrice
+			} else {
+				zero := float64(0)
+				priceInputToken = &zero
+				priceOutputToken = &zero
+				priceCacheCreate = &zero
+				priceCacheRead = &zero
+			}
+		} else {
+			zero := float64(0)
+			pricePerRequest = &zero
+		}
+
+		if errExist == nil {
+			updates := map[string]any{
+				"billing_type":             billingType,
+				"price_per_request":        pricePerRequest,
+				"price_input_token":        priceInputToken,
+				"price_output_token":       priceOutputToken,
+				"price_cache_create_token": priceCacheCreate,
+				"price_cache_read_token":   priceCacheRead,
+				"is_enabled":               true,
+				"updated_at":               now,
+			}
+			if errUpd := h.db.WithContext(ctx).Model(&models.BillingRule{}).Where("id = ?", existing.ID).Updates(updates).Error; errUpd == nil {
+				updated++
+			}
+		} else if errors.Is(errExist, gorm.ErrRecordNotFound) {
+			rule := models.BillingRule{
+				AuthGroupID:           body.AuthGroupID,
+				UserGroupID:           body.UserGroupID,
+				Provider:              provider,
+				Model:                 model,
+				BillingType:           billingType,
+				PricePerRequest:       pricePerRequest,
+				PriceInputToken:       priceInputToken,
+				PriceOutputToken:      priceOutputToken,
+				PriceCacheCreateToken: priceCacheCreate,
+				PriceCacheReadToken:   priceCacheRead,
+				IsEnabled:             true,
+				CreatedAt:             now,
+				UpdatedAt:             now,
+			}
+			if errCreate := h.db.WithContext(ctx).Create(&rule).Error; errCreate == nil {
+				created++
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"created": created, "updated": updated})
+}

@@ -25,6 +25,9 @@ func RegisterAdminRoutes(r *gin.Engine, db *gorm.DB, jwtCfg config.JWTConfig, co
 	healthHandler := handlers.NewHealthHandler(db)
 	r.GET("/healthz", healthHandler.Healthz)
 
+	versionHandler := handlers.NewVersionHandler()
+	r.GET("/v0/version", versionHandler.GetVersion)
+
 	adminGroup := r.Group("/v0/admin")
 
 	webAuthn, errWebAuthn := security.NewWebAuthn()
@@ -126,6 +129,7 @@ func RegisterAdminRoutes(r *gin.Engine, db *gorm.DB, jwtCfg config.JWTConfig, co
 	authed.PUT("/billing-rules/:id", billingRuleHandler.Update)
 	authed.DELETE("/billing-rules/:id", billingRuleHandler.Delete)
 	authed.POST("/billing-rules/:id/enabled", billingRuleHandler.SetEnabled)
+	authed.POST("/billing-rules/batch-import", billingRuleHandler.BatchImport)
 
 	prepaidCardHandler := handlers.NewPrepaidCardHandler(db)
 	authed.POST("/prepaid-cards", prepaidCardHandler.Create)

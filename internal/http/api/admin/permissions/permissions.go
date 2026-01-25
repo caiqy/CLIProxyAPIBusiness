@@ -213,6 +213,7 @@ var definitions = []Definition{
 	newDefinition("PUT", "/v0/admin/billing-rules/:id", "Update Billing Rule", "Billing Rules"),
 	newDefinition("DELETE", "/v0/admin/billing-rules/:id", "Delete Billing Rule", "Billing Rules"),
 	newDefinition("POST", "/v0/admin/billing-rules/:id/enabled", "Set Billing Rule Enabled", "Billing Rules"),
+	newDefinition("POST", "/v0/admin/billing-rules/batch-import", "Batch Import Billing Rules", "Billing Rules"),
 
 	newDefinition("GET", "/v0/admin/logs", "List Logs", "Logs"),
 	newDefinition("GET", "/v0/admin/logs/detail", "View Log Details", "Logs"),
