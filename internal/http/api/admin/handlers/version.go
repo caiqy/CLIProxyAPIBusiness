@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -16,11 +17,51 @@ const (
 	githubAPIURL    = "https://api.github.com/repos/router-for-me/CLIProxyAPIBusiness/releases/latest"
 	githubReleaseUI = "https://github.com/router-for-me/CLIProxyAPIBusiness/releases/latest"
 	httpTimeout     = 10 * time.Second
+	cacheDuration   = 1 * time.Hour
 )
 
 type githubRelease struct {
 	TagName string `json:"tag_name"`
 	HTMLURL string `json:"html_url"`
+}
+
+type versionCache struct {
+	mu            sync.RWMutex
+	latestVersion string
+	releaseURL    string
+	fetchedAt     time.Time
+	hasError      bool
+}
+
+var globalVersionCache = &versionCache{}
+
+func (c *versionCache) get() (version string, url string, valid bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.hasError || c.fetchedAt.IsZero() {
+		return "", "", false
+	}
+	if time.Since(c.fetchedAt) > cacheDuration {
+		return "", "", false
+	}
+	return c.latestVersion, c.releaseURL, true
+}
+
+func (c *versionCache) set(version, url string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.latestVersion = version
+	c.releaseURL = url
+	c.fetchedAt = time.Now()
+	c.hasError = false
+}
+
+func (c *versionCache) setError() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.hasError = true
+	c.fetchedAt = time.Time{}
 }
 
 // VersionHandler handles version check endpoints.
@@ -51,13 +92,23 @@ func (h *VersionHandler) GetVersion(c *gin.Context) {
 		HasUpdate:      false,
 	}
 
+	if cachedVersion, cachedURL, valid := globalVersionCache.get(); valid {
+		resp.LatestVersion = cachedVersion
+		resp.ReleaseURL = cachedURL
+		resp.HasUpdate = isNewerVersion(buildinfo.Version, cachedVersion)
+		c.JSON(http.StatusOK, resp)
+		return
+	}
+
 	latestVersion, releaseURL, errFetch := fetchLatestRelease(c.Request.Context())
 	if errFetch != nil {
+		globalVersionCache.setError()
 		resp.CheckError = errFetch.Error()
 		c.JSON(http.StatusOK, resp)
 		return
 	}
 
+	globalVersionCache.set(latestVersion, releaseURL)
 	resp.LatestVersion = latestVersion
 	resp.ReleaseURL = releaseURL
 	resp.HasUpdate = isNewerVersion(buildinfo.Version, latestVersion)
