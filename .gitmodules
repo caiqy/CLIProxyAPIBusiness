@@ -1,0 +1,4 @@
+[submodule "web"]
+	path = web
+	url = https://github.com/caiqy/cpab-web.git
+	branch = main
