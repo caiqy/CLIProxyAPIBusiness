@@ -1,14 +1,29 @@
 package handlers
 
 import (
+	"encoding/json"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/models"
 	"gorm.io/gorm"
 )
+
+func providerCredentialName(provider string, authLabel string, providerKeyLabel string) string {
+	authLabel = strings.TrimSpace(authLabel)
+	providerKeyLabel = strings.TrimSpace(providerKeyLabel)
+	provider = strings.TrimSpace(provider)
+	if authLabel != "" {
+		return authLabel
+	}
+	if providerKeyLabel != "" {
+		return providerKeyLabel
+	}
+	return provider
+}
 
 // DashboardHandler serves admin dashboard analytics endpoints.
 type DashboardHandler struct {
@@ -216,7 +231,7 @@ type transactionItem struct {
 	Status        string `json:"status"`          // HTTP-like status label.
 	StatusType    string `json:"status_type"`     // UI status type.
 	Timestamp     string `json:"timestamp"`       // Local timestamp string.
-	Provider      string `json:"provider"`        // Upstream provider name.
+	Provider      string `json:"provider"`        // Provider credential display name.
 	Model         string `json:"model"`           // Model identifier.
 	RequestTimeMs int64  `json:"request_time_ms"` // Request duration in milliseconds.
 	InputTokens   int64  `json:"input_tokens"`    // Input token count.
@@ -236,15 +251,101 @@ func (h *DashboardHandler) RecentTransactions(c *gin.Context) {
 		return
 	}
 
+	authIDsSet := make(map[uint64]struct{})
+
 	userIDsSet := make(map[uint64]struct{})
 	apiKeyIDsSet := make(map[uint64]struct{})
 	for _, u := range usages {
+		if u.AuthID != nil {
+			authIDsSet[*u.AuthID] = struct{}{}
+		}
 		if u.UserID != nil {
 			userIDsSet[*u.UserID] = struct{}{}
 			continue
 		}
 		if u.APIKeyID != nil {
 			apiKeyIDsSet[*u.APIKeyID] = struct{}{}
+		}
+	}
+
+	authIDToLabel := make(map[uint64]string)
+	if len(authIDsSet) > 0 {
+		authIDs := make([]uint64, 0, len(authIDsSet))
+		for id := range authIDsSet {
+			authIDs = append(authIDs, id)
+		}
+		var authRows []models.Auth
+		if errAuths := h.db.WithContext(c.Request.Context()).
+			Model(&models.Auth{}).
+			Select("id", "name").
+			Where("id IN ?", authIDs).
+			Find(&authRows).Error; errAuths == nil {
+			for _, a := range authRows {
+				label := strings.TrimSpace(a.Name)
+				// Never fall back to a.Key here: it can be sensitive.
+				authIDToLabel[a.ID] = label
+			}
+		}
+	}
+
+	providerKeyNameByAuthKey := make(map[string]string)
+	providerKeyPriorityByAuthKey := make(map[string]int)
+	providersSet := make(map[string]struct{})
+	authKeysSet := make(map[string]struct{})
+	for _, u := range usages {
+		if u.AuthID != nil {
+			continue
+		}
+		key := strings.TrimSpace(u.AuthKey)
+		if key == "" {
+			continue
+		}
+		providersSet[strings.TrimSpace(u.Provider)] = struct{}{}
+		authKeysSet[key] = struct{}{}
+	}
+	if len(providersSet) > 0 && len(authKeysSet) > 0 {
+		providers := make([]string, 0, len(providersSet))
+		for p := range providersSet {
+			if p != "" {
+				providers = append(providers, p)
+			}
+		}
+		var providerRows []models.ProviderAPIKey
+		if len(providers) > 0 {
+			_ = h.db.WithContext(c.Request.Context()).
+				Model(&models.ProviderAPIKey{}).
+				Select("provider", "name", "api_key", "api_key_entries").
+				Where("provider IN ?", providers).
+				Find(&providerRows).Error
+		}
+		for _, row := range providerRows {
+			name := strings.TrimSpace(row.Name)
+			// Do not fall back to API key values. If name is empty, leave it empty and let caller fall back to provider.
+
+			update := func(key string) {
+				key = strings.TrimSpace(key)
+				if key == "" {
+					return
+				}
+				if _, ok := authKeysSet[key]; !ok {
+					return
+				}
+				currentPriority, exists := providerKeyPriorityByAuthKey[key]
+				if !exists || row.Priority > currentPriority {
+					providerKeyPriorityByAuthKey[key] = row.Priority
+					providerKeyNameByAuthKey[key] = name
+				}
+			}
+
+			update(row.APIKey)
+			if len(row.APIKeyEntries) > 0 {
+				var entries []apiKeyEntry
+				if err := json.Unmarshal(row.APIKeyEntries, &entries); err == nil {
+					for _, e := range entries {
+						update(e.APIKey)
+					}
+				}
+			}
 		}
 	}
 
@@ -298,6 +399,13 @@ func (h *DashboardHandler) RecentTransactions(c *gin.Context) {
 			}
 		}
 
+		authLabel := ""
+		if u.AuthID != nil {
+			authLabel = authIDToLabel[*u.AuthID]
+		}
+		providerKeyLabel := providerKeyNameByAuthKey[strings.TrimSpace(u.AuthKey)]
+		providerLabel := providerCredentialName(u.Provider, authLabel, providerKeyLabel)
+
 		status := "200 OK"
 		statusType := "success"
 		if u.Failed {
@@ -315,7 +423,7 @@ func (h *DashboardHandler) RecentTransactions(c *gin.Context) {
 			Status:        status,
 			StatusType:    statusType,
 			Timestamp:     u.RequestedAt.In(time.Local).Format("2006-01-02 15:04:05"),
-			Provider:      u.Provider,
+			Provider:      providerLabel,
 			Model:         u.Model,
 			RequestTimeMs: requestTimeMs,
 			InputTokens:   u.InputTokens,
