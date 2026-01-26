@@ -18,6 +18,7 @@ var/
 # System & IDE
 .DS_Store
 .worktrees/
+.idea/
 .vscode/
 .codex/
 .claude/
