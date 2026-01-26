@@ -134,6 +134,34 @@ func (h *UserHandler) List(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "list users failed"})
 		return
 	}
+
+	// Compute today's spend per user.
+	// Note: Usage.RequestedAt is stored with timezone; we use local midnight boundary for consistency with dashboard.
+	todayCostByUserID := make(map[uint64]int64)
+	if len(rows) > 0 {
+		userIDs := make([]uint64, 0, len(rows))
+		for _, row := range rows {
+			userIDs = append(userIDs, row.ID)
+		}
+
+		loc := time.Local
+		now := time.Now().In(loc)
+		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+
+		type userCostRow struct {
+			UserID     uint64 `gorm:"column:user_id"`
+			CostMicros int64  `gorm:"column:cost_micros"`
+		}
+		var costs []userCostRow
+		h.db.WithContext(c.Request.Context()).Model(&models.Usage{}).
+			Where("user_id IN ? AND requested_at >= ?", userIDs, today).
+			Select("user_id, COALESCE(SUM(cost_micros), 0) AS cost_micros").
+			Group("user_id").
+			Scan(&costs)
+		for _, item := range costs {
+			todayCostByUserID[item.UserID] = item.CostMicros
+		}
+	}
 	out := make([]gin.H, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, gin.H{
@@ -143,6 +171,7 @@ func (h *UserHandler) List(c *gin.Context) {
 			"user_group_id":      row.UserGroupID.Clean(),
 			"bill_user_group_id": row.BillUserGroupID.Clean(),
 			"daily_max_usage":    row.DailyMaxUsage,
+			"today_cost_micros":  todayCostByUserID[row.ID],
 			"rate_limit":         row.RateLimit,
 			"active":             row.Active,
 			"disabled":           row.Disabled,
