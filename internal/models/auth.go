@@ -157,8 +157,9 @@ func (ids AuthGroupIDs) Values() []uint64 {
 
 // Auth stores an authentication entry and its content for relay usage.
 type Auth struct {
-	ID  uint64 `gorm:"primaryKey;autoIncrement"`       // Primary key.
-	Key string `gorm:"type:text;not null;uniqueIndex"` // Unique auth key.
+	ID   uint64 `gorm:"primaryKey;autoIncrement"`       // Primary key.
+	Key  string `gorm:"type:text;not null;uniqueIndex"` // Unique auth key.
+	Name string `gorm:"type:varchar(64)"`               // Custom display name (optional for legacy rows).
 
 	ProxyURL string `gorm:"type:text"` // Optional proxy override.
 

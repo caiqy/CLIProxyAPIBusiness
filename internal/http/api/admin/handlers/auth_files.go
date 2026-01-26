@@ -32,6 +32,7 @@ func NewAuthFileHandler(db *gorm.DB) *AuthFileHandler {
 
 // createAuthFileRequest defines the request body for auth file creation.
 type createAuthFileRequest struct {
+	Name        *string             `json:"name"`
 	Key         string              `json:"key"`
 	AuthGroupID models.AuthGroupIDs `json:"auth_group_id"`
 	ProxyURL    *string             `json:"proxy_url"`
@@ -61,6 +62,17 @@ func (h *AuthFileHandler) Create(c *gin.Context) {
 	key := strings.TrimSpace(body.Key)
 	if key == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "missing key"})
+		return
+	}
+	name := ""
+	if body.Name != nil {
+		name = strings.TrimSpace(*body.Name)
+	}
+	if name == "" {
+		name = key
+	}
+	if len([]rune(name)) > 64 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name too long"})
 		return
 	}
 
@@ -108,6 +120,7 @@ func (h *AuthFileHandler) Create(c *gin.Context) {
 	}
 	auth := models.Auth{
 		Key:         key,
+		Name:        name,
 		AuthGroupID: authGroupIDs,
 		ProxyURL:    proxyURL,
 		Content:     contentJSON,
@@ -130,6 +143,7 @@ func (h *AuthFileHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{
 		"id":            auth.ID,
 		"key":           auth.Key,
+		"name":          auth.Name,
 		"auth_group_id": auth.AuthGroupID.Clean(),
 		"proxy_url":     auth.ProxyURL,
 		"content":       auth.Content,
@@ -288,6 +302,7 @@ func (h *AuthFileHandler) Import(c *gin.Context) {
 
 		auth := models.Auth{
 			Key:         key,
+			Name:        key,
 			AuthGroupID: authGroupIDs,
 			ProxyURL:    proxyURL,
 			Content:     datatypes.JSON(contentBytes),
@@ -332,7 +347,11 @@ func (h *AuthFileHandler) List(c *gin.Context) {
 	q := h.db.WithContext(c.Request.Context()).Model(&models.Auth{})
 	if keyQ != "" {
 		pattern := dbutil.NormalizeLikePattern(h.db, "%"+keyQ+"%")
-		q = q.Where(dbutil.CaseInsensitiveLikeExpr(h.db, "key"), pattern)
+		q = q.Where(
+			dbutil.CaseInsensitiveLikeExpr(h.db, "key")+" OR "+dbutil.CaseInsensitiveLikeExpr(h.db, "name"),
+			pattern,
+			pattern,
+		)
 	}
 	if authGroupIDQ != "" {
 		if id, errParse := strconv.ParseUint(authGroupIDQ, 10, 64); errParse == nil {
@@ -362,6 +381,7 @@ func (h *AuthFileHandler) List(c *gin.Context) {
 		item := gin.H{
 			"id":            row.ID,
 			"key":           row.Key,
+			"name":          row.Name,
 			"auth_group_id": authGroupIDs,
 			"proxy_url":     row.ProxyURL,
 			"content":       row.Content,
@@ -404,6 +424,7 @@ func (h *AuthFileHandler) Get(c *gin.Context) {
 	item := gin.H{
 		"id":            auth.ID,
 		"key":           auth.Key,
+		"name":          auth.Name,
 		"auth_group_id": authGroupIDs,
 		"proxy_url":     auth.ProxyURL,
 		"content":       auth.Content,
@@ -419,6 +440,7 @@ func (h *AuthFileHandler) Get(c *gin.Context) {
 
 // updateAuthFileRequest defines the request body for auth file updates.
 type updateAuthFileRequest struct {
+	Name        *string              `json:"name"`
 	Key         *string              `json:"key"`
 	AuthGroupID *models.AuthGroupIDs `json:"auth_group_id"`
 	ProxyURL    *string              `json:"proxy_url"`
@@ -444,6 +466,18 @@ func (h *AuthFileHandler) Update(c *gin.Context) {
 
 	now := time.Now().UTC()
 	updates := map[string]any{"updated_at": now}
+	if body.Name != nil {
+		trimmed := strings.TrimSpace(*body.Name)
+		if trimmed == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+			return
+		}
+		if len([]rune(trimmed)) > 64 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "name too long"})
+			return
+		}
+		updates["name"] = trimmed
+	}
 
 	if body.Key != nil {
 		updates["key"] = strings.TrimSpace(*body.Key)

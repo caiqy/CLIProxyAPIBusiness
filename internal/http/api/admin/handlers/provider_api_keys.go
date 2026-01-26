@@ -165,8 +165,13 @@ func (h *ProviderAPIKeyHandler) Create(c *gin.Context) {
 	row.APIKeyEntries = apiKeyEntriesJSON
 
 	normalizeProviderFields(&row)
+	ensureProviderName(&row)
 	if errValidate := validateProviderRow(&row); errValidate != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": errValidate.Error()})
+		return
+	}
+	if len([]rune(row.Name)) > 64 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name too long"})
 		return
 	}
 
@@ -324,7 +329,16 @@ func (h *ProviderAPIKeyHandler) Update(c *gin.Context) {
 		row.Provider = normalized
 	}
 	if body.Name != nil {
-		row.Name = strings.TrimSpace(*body.Name)
+		trimmed := strings.TrimSpace(*body.Name)
+		if trimmed == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "name is required"})
+			return
+		}
+		if len([]rune(trimmed)) > 64 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "name too long"})
+			return
+		}
+		row.Name = trimmed
 	}
 	if body.Priority != nil {
 		row.Priority = *body.Priority
@@ -375,8 +389,13 @@ func (h *ProviderAPIKeyHandler) Update(c *gin.Context) {
 	}
 
 	normalizeProviderFields(&row)
+	ensureProviderName(&row)
 	if errValidate := validateProviderRow(&row); errValidate != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": errValidate.Error()})
+		return
+	}
+	if len([]rune(row.Name)) > 64 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name too long"})
 		return
 	}
 
@@ -589,9 +608,39 @@ func normalizeProviderFields(row *models.ProviderAPIKey) {
 		row.ProxyURL = ""
 		row.ExcludedModels = nil
 	default:
-		row.Name = ""
 		row.APIKeyEntries = nil
 	}
+}
+
+func ensureProviderName(row *models.ProviderAPIKey) {
+	if row == nil {
+		return
+	}
+	provider := normalizeProvider(row.Provider)
+	if provider == "" {
+		return
+	}
+	name := strings.TrimSpace(row.Name)
+	if name != "" {
+		row.Name = name
+		return
+	}
+	switch provider {
+	case providerGemini, providerCodex, providerClaude:
+		row.Name = maskAPIKey(strings.TrimSpace(row.APIKey))
+	}
+}
+
+func maskAPIKey(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	runes := []rune(trimmed)
+	if len(runes) <= 12 {
+		return trimmed
+	}
+	return string(runes[:4]) + "..." + string(runes[len(runes)-4:])
 }
 
 // validateProviderRow enforces required fields per provider type.
@@ -604,6 +653,9 @@ func validateProviderRow(row *models.ProviderAPIKey) error {
 		if strings.TrimSpace(row.APIKey) == "" {
 			return errors.New("api_key is required")
 		}
+		if strings.TrimSpace(row.Name) == "" {
+			return errors.New("name is required")
+		}
 	case providerCodex:
 		if strings.TrimSpace(row.APIKey) == "" {
 			return errors.New("api_key is required")
@@ -611,9 +663,15 @@ func validateProviderRow(row *models.ProviderAPIKey) error {
 		if strings.TrimSpace(row.BaseURL) == "" {
 			return errors.New("base_url is required")
 		}
+		if strings.TrimSpace(row.Name) == "" {
+			return errors.New("name is required")
+		}
 	case providerClaude:
 		if strings.TrimSpace(row.APIKey) == "" {
 			return errors.New("api_key is required")
+		}
+		if strings.TrimSpace(row.Name) == "" {
+			return errors.New("name is required")
 		}
 	case providerOpenAI:
 		if strings.TrimSpace(row.Name) == "" {
