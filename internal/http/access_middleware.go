@@ -36,6 +36,11 @@ func AccessAuthMiddleware(manager *sdkaccess.Manager) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Missing API key"})
 		case errors.Is(err, sdkaccess.ErrInvalidCredential):
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
+		case errors.Is(err, access.ErrDailyMaxUsageExceeded):
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+				"error": "Daily max usage exceeded",
+				"code":  "daily_max_usage_exceeded",
+			})
 		case errors.Is(err, access.ErrInsufficientBalance):
 			c.AbortWithStatusJSON(http.StatusPaymentRequired, gin.H{"error": "Insufficient balance"})
 		default:

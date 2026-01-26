@@ -22,6 +22,9 @@ const ProviderTypeDBAPIKey = "db-api-key"
 // ErrInsufficientBalance indicates the user has no valid quota or prepaid balance.
 var ErrInsufficientBalance = errors.New("insufficient balance")
 
+// ErrDailyMaxUsageExceeded indicates the user exceeded daily prepaid spending limit.
+var ErrDailyMaxUsageExceeded = errors.New("daily max usage exceeded")
+
 // DBAPIKeyProvider authenticates requests using API keys stored in the database.
 type DBAPIKeyProvider struct {
 	db *gorm.DB
@@ -208,7 +211,74 @@ func hasValidBillOrPrepaidBalance(ctx context.Context, db *gorm.DB, userID uint6
 	if okBill {
 		return true, nil
 	}
-	return hasValidPrepaidBalance(ctx, db, userID)
+
+	okPrepaid, errPrepaid := hasValidPrepaidBalance(ctx, db, userID)
+	if errPrepaid != nil {
+		return false, errPrepaid
+	}
+	if !okPrepaid {
+		return false, nil
+	}
+
+	dailyMax, errDailyMax := loadUserDailyMaxUsage(ctx, db, userID)
+	if errDailyMax != nil {
+		return false, errDailyMax
+	}
+	if dailyMax <= 0 {
+		return true, nil
+	}
+
+	usedPrepaidToday, errUsed := loadTodayPrepaidUsageAmount(ctx, db, userID, time.Now().UTC())
+	if errUsed != nil {
+		return false, errUsed
+	}
+	const dailyUsageEpsilon = 0.000001
+	if usedPrepaidToday+dailyUsageEpsilon >= dailyMax {
+		return false, ErrDailyMaxUsageExceeded
+	}
+	return true, nil
+}
+
+func loadUserDailyMaxUsage(ctx context.Context, db *gorm.DB, userID uint64) (float64, error) {
+	if db == nil {
+		return 0, errors.New("nil db")
+	}
+	if userID == 0 {
+		return 0, nil
+	}
+	var row struct {
+		DailyMaxUsage float64 `gorm:"column:daily_max_usage"`
+	}
+	err := db.WithContext(ctx).
+		Model(&models.User{}).
+		Select("daily_max_usage").
+		Where("id = ?", userID).
+		Take(&row).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return row.DailyMaxUsage, nil
+}
+
+func loadTodayPrepaidUsageAmount(ctx context.Context, db *gorm.DB, userID uint64, now time.Time) (float64, error) {
+	if db == nil {
+		return 0, errors.New("nil db")
+	}
+	loc := time.Local
+	localNow := now.In(loc)
+	todayStart := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, loc)
+	var costMicros int64
+	if errSum := db.WithContext(ctx).
+		Model(&models.Usage{}).
+		Where("user_id = ? AND charged_to = ? AND requested_at >= ?", userID, "prepaid", todayStart).
+		Select("COALESCE(SUM(cost_micros), 0)").
+		Scan(&costMicros).Error; errSum != nil {
+		return 0, errSum
+	}
+	return float64(costMicros) / 1_000_000, nil
 }
 
 // hasValidBillQuota checks if the user has paid bill quota remaining.

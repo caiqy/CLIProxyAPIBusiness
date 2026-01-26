@@ -113,6 +113,7 @@ func (p *GormUsagePlugin) HandleUsage(ctx context.Context, record coreusage.Reco
 		CachedTokens:    record.Detail.CachedTokens,
 		TotalTokens:     totalTokens,
 		CostMicros:      costMicros,
+		ChargedTo:       "none",
 		CreatedAt:       time.Now().UTC(),
 	}
 
@@ -122,14 +123,25 @@ func (p *GormUsagePlugin) HandleUsage(ctx context.Context, record coreusage.Reco
 		}
 
 		if amountToDeduct > 0 && row.UserID != nil {
+			chargedTo := "none"
 			deducted, errDeductBill := deductBillBalance(dbCtx, tx, *row.UserID, billingUserGroupID, amountToDeduct, costMicros)
 			if errDeductBill != nil {
 				return errDeductBill
 			}
-			if !deducted {
+			if deducted {
+				chargedTo = "bill"
+			} else {
 				if errDeductPrepaid := deductPrepaidBalance(dbCtx, tx, *row.UserID, billingUserGroupID, amountToDeduct); errDeductPrepaid != nil {
 					return errDeductPrepaid
 				}
+				chargedTo = "prepaid"
+			}
+
+			if errUpdate := tx.WithContext(dbCtx).
+				Model(&models.Usage{}).
+				Where("id = ?", row.ID).
+				Update("charged_to", chargedTo).Error; errUpdate != nil {
+				return errUpdate
 			}
 		}
 		return nil
@@ -561,8 +573,19 @@ func calculateCost(ctx context.Context, db *gorm.DB, apiKeyID, userID, authID, b
 			return int64(math.Round(*rule.PricePerRequest * 1_000_000))
 		case models.BillingTypePerToken:
 			var total float64
+			// Many upstream providers (e.g. OpenAI usage format) report CachedTokens as a subset of
+			// InputTokens (input_tokens_details.cached_tokens). If we charge InputTokens in full AND
+			// charge CachedTokens again as cache-read, cache hit tokens would be double-charged.
+			//
+			// To make per-token billing consistent across providers, we treat billable input tokens as:
+			//   billableInput = max(InputTokens - CachedTokens, 0)
+			// and charge CachedTokens separately via PriceCacheReadToken.
+			billableInputTokens := record.Detail.InputTokens
+			if record.Detail.CachedTokens > 0 && record.Detail.CachedTokens <= billableInputTokens {
+				billableInputTokens -= record.Detail.CachedTokens
+			}
 			if rule.PriceInputToken != nil {
-				total += float64(record.Detail.InputTokens) * (*rule.PriceInputToken)
+				total += float64(billableInputTokens) * (*rule.PriceInputToken)
 			}
 			if rule.PriceOutputToken != nil {
 				total += float64(record.Detail.OutputTokens) * (*rule.PriceOutputToken)

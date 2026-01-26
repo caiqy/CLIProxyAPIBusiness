@@ -14,6 +14,11 @@ func TestCreateAdminUserWithConn_SetsSuperAdmin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
+	if sqlDB, errDB := conn.DB(); errDB == nil && sqlDB != nil {
+		t.Cleanup(func() {
+			_ = sqlDB.Close()
+		})
+	}
 	if errMigrate := db.Migrate(conn); errMigrate != nil {
 		t.Fatalf("migrate: %v", errMigrate)
 	}

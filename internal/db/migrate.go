@@ -83,6 +83,12 @@ func migratePostgres(conn *gorm.DB) error {
 	`).Error; errUsageErrorDetail != nil {
 		return fmt.Errorf("db: add usage error detail: %w", errUsageErrorDetail)
 	}
+	if errUsageChargedTo := conn.Exec(`
+		ALTER TABLE usages
+		ADD COLUMN IF NOT EXISTS charged_to text NOT NULL DEFAULT 'none'
+	`).Error; errUsageChargedTo != nil {
+		return fmt.Errorf("db: add usage charged_to: %w", errUsageChargedTo)
+	}
 	if errSeed := ensureDefaultGroups(conn); errSeed != nil {
 		return errSeed
 	}
@@ -571,6 +577,13 @@ func migratePostgres(conn *gorm.DB) error {
 			`,
 		},
 		{
+			name: "idx_usages_user_id_charged_to_requested_at",
+			sql: `
+				CREATE INDEX IF NOT EXISTS idx_usages_user_id_charged_to_requested_at
+				ON usages (user_id, charged_to, requested_at DESC)
+			`,
+		},
+		{
 			name: "idx_usages_api_key_id_requested_at",
 			sql: `
 				CREATE INDEX IF NOT EXISTS idx_usages_api_key_id_requested_at
@@ -883,6 +896,14 @@ func migrateSQLite(conn *gorm.DB) error {
 			return fmt.Errorf("db: add usage error detail: %w", errUsageErrorDetail)
 		}
 	}
+	if migrator != nil && !migrator.HasColumn(&models.Usage{}, "charged_to") {
+		if errUsageChargedTo := conn.Exec(`
+			ALTER TABLE usages
+			ADD COLUMN charged_to text NOT NULL DEFAULT 'none'
+		`).Error; errUsageChargedTo != nil {
+			return fmt.Errorf("db: add usage charged_to: %w", errUsageChargedTo)
+		}
+	}
 	if errSeed := ensureDefaultGroups(conn); errSeed != nil {
 		return errSeed
 	}
@@ -1131,6 +1152,13 @@ func migrateSQLite(conn *gorm.DB) error {
 			sql: `
 				CREATE INDEX IF NOT EXISTS idx_usages_user_id_requested_at
 				ON usages (user_id, requested_at DESC)
+			`,
+		},
+		{
+			name: "idx_usages_user_id_charged_to_requested_at",
+			sql: `
+				CREATE INDEX IF NOT EXISTS idx_usages_user_id_charged_to_requested_at
+				ON usages (user_id, charged_to, requested_at DESC)
 			`,
 		},
 		{

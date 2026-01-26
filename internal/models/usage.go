@@ -36,5 +36,9 @@ type Usage struct {
 
 	CostMicros int64 `gorm:"not null;default:0"` // Cost in micros.
 
+	// ChargedTo indicates where the cost was deducted.
+	// Values: "bill", "prepaid", "none".
+	ChargedTo string `gorm:"type:text;not null;default:'none';index"`
+
 	CreatedAt time.Time `gorm:"not null;autoCreateTime"` // Creation timestamp.
 }

@@ -26,10 +26,13 @@ func NewUserHandler(db *gorm.DB) *UserHandler {
 
 // createUserRequest defines the request body for user creation.
 type createUserRequest struct {
-	Username  string `json:"username"`
-	Email     string `json:"email"`
-	Password  string `json:"password"`
-	RateLimit int    `json:"rate_limit"`
+	Username      string              `json:"username"`
+	Email         string              `json:"email"`
+	Password      string              `json:"password"`
+	UserGroupID   models.UserGroupIDs `json:"user_group_id"`
+	DailyMaxUsage *float64            `json:"daily_max_usage"`
+	RateLimit     int                 `json:"rate_limit"`
+	Disabled      *bool               `json:"disabled"`
 }
 
 // Create creates a new user account.
@@ -58,12 +61,24 @@ func (h *UserHandler) Create(c *gin.Context) {
 
 	now := time.Now().UTC()
 	user := models.User{
-		Username:  username,
-		Email:     strings.TrimSpace(body.Email),
-		Password:  hash,
+		Username:    username,
+		Email:       strings.TrimSpace(body.Email),
+		Password:    hash,
+		UserGroupID: body.UserGroupID.Clean(),
+		DailyMaxUsage: func() float64 {
+			if body.DailyMaxUsage == nil {
+				return 0
+			}
+			return *body.DailyMaxUsage
+		}(),
 		RateLimit: body.RateLimit,
 		Active:    true,
-		Disabled:  false,
+		Disabled: func() bool {
+			if body.Disabled == nil {
+				return false
+			}
+			return *body.Disabled
+		}(),
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
