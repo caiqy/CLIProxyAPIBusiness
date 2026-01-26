@@ -42,10 +42,14 @@ func NewDashboardHandler(db *gorm.DB) *DashboardHandler {
 type kpiResponse struct {
 	TotalRequests    int64   `json:"total_requests"`
 	RequestsTrend    float64 `json:"requests_trend"`
+	TodayTokens      int64   `json:"today_tokens"`
+	TodayTokensTrend float64 `json:"today_tokens_trend"`
 	AvgTokens        float64 `json:"avg_tokens"`
 	AvgTokensTrend   float64 `json:"avg_tokens_trend"`
 	SuccessRate      float64 `json:"success_rate"`
 	SuccessRateTrend float64 `json:"success_rate_trend"`
+	TodayCostMicros  int64   `json:"today_cost_micros"`
+	TodayCostTrend   float64 `json:"today_cost_trend"`
 	MtdCostMicros    int64   `json:"mtd_cost_micros"`
 	CostTrend        float64 `json:"cost_trend"`
 }
@@ -81,20 +85,22 @@ func (h *DashboardHandler) KPI(c *gin.Context) {
 		Total       int64
 		Failed      int64
 		TotalTokens int64
+		CostMicros  int64
 	}
 	h.db.WithContext(c.Request.Context()).Model(&models.Usage{}).
 		Where("api_key_id IN ? AND requested_at >= ?", apiKeyIDs, today).
-		Select("COUNT(*) AS total, SUM(CASE WHEN failed THEN 1 ELSE 0 END) AS failed, COALESCE(SUM(total_tokens), 0) AS total_tokens").
+		Select("COUNT(*) AS total, SUM(CASE WHEN failed THEN 1 ELSE 0 END) AS failed, COALESCE(SUM(total_tokens), 0) AS total_tokens, COALESCE(SUM(cost_micros), 0) AS cost_micros").
 		Scan(&todayStats)
 
 	var yesterdayStats struct {
 		Total       int64
 		Failed      int64
 		TotalTokens int64
+		CostMicros  int64
 	}
 	h.db.WithContext(c.Request.Context()).Model(&models.Usage{}).
 		Where("api_key_id IN ? AND requested_at >= ? AND requested_at < ?", apiKeyIDs, yesterday, today).
-		Select("COUNT(*) AS total, SUM(CASE WHEN failed THEN 1 ELSE 0 END) AS failed, COALESCE(SUM(total_tokens), 0) AS total_tokens").
+		Select("COUNT(*) AS total, SUM(CASE WHEN failed THEN 1 ELSE 0 END) AS failed, COALESCE(SUM(total_tokens), 0) AS total_tokens, COALESCE(SUM(cost_micros), 0) AS cost_micros").
 		Scan(&yesterdayStats)
 
 	var mtdCost int64
@@ -112,6 +118,7 @@ func (h *DashboardHandler) KPI(c *gin.Context) {
 		Scan(&lastMtdCost)
 
 	requestsTrend := calcTrend(float64(yesterdayStats.Total), float64(todayStats.Total))
+	todayTokensTrend := calcTrend(float64(yesterdayStats.TotalTokens), float64(todayStats.TotalTokens))
 	successRate := 100.0
 	if todayStats.Total > 0 {
 		successRate = float64(todayStats.Total-todayStats.Failed) / float64(todayStats.Total) * 100
@@ -121,6 +128,7 @@ func (h *DashboardHandler) KPI(c *gin.Context) {
 		yesterdaySuccessRate = float64(yesterdayStats.Total-yesterdayStats.Failed) / float64(yesterdayStats.Total) * 100
 	}
 	successRateTrend := successRate - yesterdaySuccessRate
+	todayCostTrend := calcTrend(float64(yesterdayStats.CostMicros), float64(todayStats.CostMicros))
 	costTrend := calcTrend(float64(lastMtdCost), float64(mtdCost))
 
 	avgTokens := 0.0
@@ -136,10 +144,14 @@ func (h *DashboardHandler) KPI(c *gin.Context) {
 	c.JSON(http.StatusOK, kpiResponse{
 		TotalRequests:    todayStats.Total,
 		RequestsTrend:    requestsTrend,
+		TodayTokens:      todayStats.TotalTokens,
+		TodayTokensTrend: todayTokensTrend,
 		AvgTokens:        avgTokens,
 		AvgTokensTrend:   avgTokensTrend,
 		SuccessRate:      successRate,
 		SuccessRateTrend: successRateTrend,
+		TodayCostMicros:  todayStats.CostMicros,
+		TodayCostTrend:   todayCostTrend,
 		MtdCostMicros:    mtdCost,
 		CostTrend:        costTrend,
 	})
