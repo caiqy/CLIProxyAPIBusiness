@@ -263,13 +263,16 @@ func (h *DashboardHandler) ModelHealth(c *gin.Context) {
 
 // transactionItem defines a recent transaction entry.
 type transactionItem struct {
-	Status     string `json:"status"`
-	StatusType string `json:"status_type"`
-	Timestamp  string `json:"timestamp"`
-	Method     string `json:"method"`
-	Model      string `json:"model"`
-	Tokens     int64  `json:"tokens"`
-	CostMicros int64  `json:"cost_micros"`
+	Status        string `json:"status"`
+	StatusType    string `json:"status_type"`
+	Timestamp     string `json:"timestamp"`
+	Provider      string `json:"provider"`
+	Model         string `json:"model"`
+	RequestTimeMs int64  `json:"request_time_ms"`
+	InputTokens   int64  `json:"input_tokens"`
+	CachedTokens  int64  `json:"cached_tokens"`
+	OutputTokens  int64  `json:"output_tokens"`
+	CostMicros    int64  `json:"cost_micros"`
 }
 
 // RecentTransactions returns recent usage records as transactions.
@@ -308,14 +311,22 @@ func (h *DashboardHandler) RecentTransactions(c *gin.Context) {
 			status = "Error"
 			statusType = "error"
 		}
+
+		requestTimeMs := int64(0)
+		if !u.CreatedAt.IsZero() && u.CreatedAt.After(u.RequestedAt) {
+			requestTimeMs = u.CreatedAt.Sub(u.RequestedAt).Milliseconds()
+		}
 		transactions = append(transactions, transactionItem{
-			Status:     status,
-			StatusType: statusType,
-			Timestamp:  u.RequestedAt.In(time.Local).Format("2006-01-02 15:04:05"),
-			Method:     "POST",
-			Model:      u.Model,
-			Tokens:     u.TotalTokens,
-			CostMicros: u.CostMicros,
+			Status:        status,
+			StatusType:    statusType,
+			Timestamp:     u.RequestedAt.In(time.Local).Format("2006-01-02 15:04:05"),
+			Provider:      u.Provider,
+			Model:         u.Model,
+			RequestTimeMs: requestTimeMs,
+			InputTokens:   u.InputTokens,
+			CachedTokens:  u.CachedTokens,
+			OutputTokens:  u.OutputTokens,
+			CostMicros:    u.CostMicros,
 		})
 	}
 

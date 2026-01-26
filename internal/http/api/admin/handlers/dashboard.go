@@ -212,13 +212,17 @@ func (h *DashboardHandler) ModelHealth(c *gin.Context) {
 
 // transactionItem represents a recent usage record for the dashboard.
 type transactionItem struct {
-	Status     string `json:"status"`      // HTTP-like status label.
-	StatusType string `json:"status_type"` // UI status type.
-	Timestamp  string `json:"timestamp"`   // Local timestamp string.
-	Method     string `json:"method"`      // HTTP method label.
-	Model      string `json:"model"`       // Model identifier.
-	Tokens     int64  `json:"tokens"`      // Total tokens.
-	CostMicros int64  `json:"cost_micros"` // Cost in micros.
+	Username      string `json:"username"`        // Caller username.
+	Status        string `json:"status"`          // HTTP-like status label.
+	StatusType    string `json:"status_type"`     // UI status type.
+	Timestamp     string `json:"timestamp"`       // Local timestamp string.
+	Provider      string `json:"provider"`        // Upstream provider name.
+	Model         string `json:"model"`           // Model identifier.
+	RequestTimeMs int64  `json:"request_time_ms"` // Request duration in milliseconds.
+	InputTokens   int64  `json:"input_tokens"`    // Input token count.
+	CachedTokens  int64  `json:"cached_tokens"`   // Cached token count.
+	OutputTokens  int64  `json:"output_tokens"`   // Output token count.
+	CostMicros    int64  `json:"cost_micros"`     // Cost in micros.
 }
 
 // RecentTransactions returns recent transactions for all users
@@ -232,22 +236,92 @@ func (h *DashboardHandler) RecentTransactions(c *gin.Context) {
 		return
 	}
 
+	userIDsSet := make(map[uint64]struct{})
+	apiKeyIDsSet := make(map[uint64]struct{})
+	for _, u := range usages {
+		if u.UserID != nil {
+			userIDsSet[*u.UserID] = struct{}{}
+			continue
+		}
+		if u.APIKeyID != nil {
+			apiKeyIDsSet[*u.APIKeyID] = struct{}{}
+		}
+	}
+
+	apiKeyToUserID := make(map[uint64]uint64)
+	if len(apiKeyIDsSet) > 0 {
+		apiKeyIDs := make([]uint64, 0, len(apiKeyIDsSet))
+		for id := range apiKeyIDsSet {
+			apiKeyIDs = append(apiKeyIDs, id)
+		}
+		var apiKeys []models.APIKey
+		if errAPIKeys := h.db.WithContext(c.Request.Context()).
+			Model(&models.APIKey{}).
+			Select("id", "user_id").
+			Where("id IN ?", apiKeyIDs).
+			Find(&apiKeys).Error; errAPIKeys == nil {
+			for _, k := range apiKeys {
+				if k.UserID != nil {
+					apiKeyToUserID[k.ID] = *k.UserID
+					userIDsSet[*k.UserID] = struct{}{}
+				}
+			}
+		}
+	}
+
+	userIDToUsername := make(map[uint64]string)
+	if len(userIDsSet) > 0 {
+		userIDs := make([]uint64, 0, len(userIDsSet))
+		for id := range userIDsSet {
+			userIDs = append(userIDs, id)
+		}
+		var users []models.User
+		if errUsers := h.db.WithContext(c.Request.Context()).
+			Model(&models.User{}).
+			Select("id", "username").
+			Where("id IN ?", userIDs).
+			Find(&users).Error; errUsers == nil {
+			for _, u := range users {
+				userIDToUsername[u.ID] = u.Username
+			}
+		}
+	}
+
 	transactions := make([]transactionItem, 0, len(usages))
 	for _, u := range usages {
+		username := ""
+		if u.UserID != nil {
+			username = userIDToUsername[*u.UserID]
+		} else if u.APIKeyID != nil {
+			if uid, ok := apiKeyToUserID[*u.APIKeyID]; ok {
+				username = userIDToUsername[uid]
+			}
+		}
+
 		status := "200 OK"
 		statusType := "success"
 		if u.Failed {
 			status = "Error"
 			statusType = "error"
 		}
+
+		requestTimeMs := int64(0)
+		if !u.CreatedAt.IsZero() && u.CreatedAt.After(u.RequestedAt) {
+			requestTimeMs = u.CreatedAt.Sub(u.RequestedAt).Milliseconds()
+		}
+
 		transactions = append(transactions, transactionItem{
-			Status:     status,
-			StatusType: statusType,
-			Timestamp:  u.RequestedAt.In(time.Local).Format("2006-01-02 15:04:05"),
-			Method:     "POST",
-			Model:      u.Model,
-			Tokens:     u.TotalTokens,
-			CostMicros: u.CostMicros,
+			Username:      username,
+			Status:        status,
+			StatusType:    statusType,
+			Timestamp:     u.RequestedAt.In(time.Local).Format("2006-01-02 15:04:05"),
+			Provider:      u.Provider,
+			Model:         u.Model,
+			RequestTimeMs: requestTimeMs,
+			InputTokens:   u.InputTokens,
+			CachedTokens:  u.CachedTokens,
+			OutputTokens:  u.OutputTokens,
+			CostMicros:    u.CostMicros,
 		})
 	}
 
