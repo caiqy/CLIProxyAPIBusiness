@@ -16,6 +16,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          fetch-depth: 1
           submodules: recursive
           ssh-key: ${{ secrets.SUBMODULE_SSH_KEY }}
       - name: Set up QEMU
@@ -38,8 +39,9 @@ jobs:
           context: .
           platforms: |
             linux/amd64
-            linux/arm64
           push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           build-args: |
             VERSION=${{ env.VERSION }}
             COMMIT=${{ env.COMMIT }}
