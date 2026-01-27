@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"math"
 	"net/http"
@@ -24,6 +26,15 @@ func providerCredentialName(provider string, authLabel string, providerKeyLabel 
 		return providerKeyLabel
 	}
 	return provider
+}
+
+func authIndexFromAPIKey(apiKey string) string {
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte("api_key:" + apiKey))
+	return hex.EncodeToString(sum[:8])
 }
 
 // DashboardHandler serves admin dashboard analytics endpoints.
@@ -350,22 +361,33 @@ func (h *DashboardHandler) RecentTransactions(c *gin.Context) {
 		}
 	}
 
+	providerKeyNameByAuthIndex := make(map[string]string)
+	providerKeyPriorityByAuthIndex := make(map[string]int)
+
+	// providerKeyNameByAuthKey is kept for legacy usage rows where AuthKey stores
+	// the raw provider API key (older versions).
 	providerKeyNameByAuthKey := make(map[string]string)
 	providerKeyPriorityByAuthKey := make(map[string]int)
+
 	providersSet := make(map[string]struct{})
+	authIndexesSet := make(map[string]struct{})
 	authKeysSet := make(map[string]struct{})
 	for _, u := range usages {
 		if u.AuthID != nil {
 			continue
 		}
-		key := strings.TrimSpace(u.AuthKey)
-		if key == "" {
-			continue
+		provider := strings.TrimSpace(u.Provider)
+		if provider != "" {
+			providersSet[provider] = struct{}{}
 		}
-		providersSet[strings.TrimSpace(u.Provider)] = struct{}{}
-		authKeysSet[key] = struct{}{}
+		if idx := strings.TrimSpace(u.AuthIndex); idx != "" {
+			authIndexesSet[idx] = struct{}{}
+		}
+		if key := strings.TrimSpace(u.AuthKey); key != "" {
+			authKeysSet[key] = struct{}{}
+		}
 	}
-	if len(providersSet) > 0 && len(authKeysSet) > 0 {
+	if len(providersSet) > 0 && (len(authIndexesSet) > 0 || len(authKeysSet) > 0) {
 		providers := make([]string, 0, len(providersSet))
 		for p := range providersSet {
 			if p != "" {
@@ -376,7 +398,7 @@ func (h *DashboardHandler) RecentTransactions(c *gin.Context) {
 		if len(providers) > 0 {
 			_ = h.db.WithContext(c.Request.Context()).
 				Model(&models.ProviderAPIKey{}).
-				Select("provider", "name", "api_key", "api_key_entries").
+				Select("provider", "name", "priority", "api_key", "api_key_entries").
 				Where("provider IN ?", providers).
 				Find(&providerRows).Error
 		}
@@ -389,13 +411,30 @@ func (h *DashboardHandler) RecentTransactions(c *gin.Context) {
 				if key == "" {
 					return
 				}
-				if _, ok := authKeysSet[key]; !ok {
-					return
+
+				// Preferred path: match by AuthIndex (hashed from api_key).
+				if len(authIndexesSet) > 0 {
+					idx := authIndexFromAPIKey(key)
+					if idx != "" {
+						if _, ok := authIndexesSet[idx]; ok {
+							currentPriority, exists := providerKeyPriorityByAuthIndex[idx]
+							if !exists || row.Priority > currentPriority {
+								providerKeyPriorityByAuthIndex[idx] = row.Priority
+								providerKeyNameByAuthIndex[idx] = name
+							}
+						}
+					}
 				}
-				currentPriority, exists := providerKeyPriorityByAuthKey[key]
-				if !exists || row.Priority > currentPriority {
-					providerKeyPriorityByAuthKey[key] = row.Priority
-					providerKeyNameByAuthKey[key] = name
+
+				// Legacy fallback: match by raw key when present in usage rows.
+				if len(authKeysSet) > 0 {
+					if _, ok := authKeysSet[key]; ok {
+						currentPriority, exists := providerKeyPriorityByAuthKey[key]
+						if !exists || row.Priority > currentPriority {
+							providerKeyPriorityByAuthKey[key] = row.Priority
+							providerKeyNameByAuthKey[key] = name
+						}
+					}
 				}
 			}
 
@@ -465,7 +504,10 @@ func (h *DashboardHandler) RecentTransactions(c *gin.Context) {
 		if u.AuthID != nil {
 			authLabel = authIDToLabel[*u.AuthID]
 		}
-		providerKeyLabel := providerKeyNameByAuthKey[strings.TrimSpace(u.AuthKey)]
+		providerKeyLabel := providerKeyNameByAuthIndex[strings.TrimSpace(u.AuthIndex)]
+		if providerKeyLabel == "" {
+			providerKeyLabel = providerKeyNameByAuthKey[strings.TrimSpace(u.AuthKey)]
+		}
 		providerLabel := providerCredentialName(u.Provider, authLabel, providerKeyLabel)
 
 		status := "200 OK"
