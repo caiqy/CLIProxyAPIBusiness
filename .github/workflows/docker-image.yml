@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - v*
+  workflow_dispatch: {}
 
 env:
   APP_NAME: CLIProxyAPIBusiness
@@ -30,10 +31,33 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Generate Build Metadata
         run: |
-          echo VERSION=`git describe --tags --always --dirty` >> $GITHUB_ENV
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            echo VERSION=manual >> $GITHUB_ENV
+          else
+            echo VERSION=`git describe --tags --always --dirty` >> $GITHUB_ENV
+          fi
           echo COMMIT=`git rev-parse --short HEAD` >> $GITHUB_ENV
           echo BUILD_DATE=`date -u +%Y-%m-%dT%H:%M:%SZ` >> $GITHUB_ENV
-      - name: Build and push
+
+      - name: Build and push (manual latest)
+        if: github.event_name == 'workflow_dispatch'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: |
+            linux/amd64
+          push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ env.VERSION }}
+            COMMIT=${{ env.COMMIT }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+          tags: |
+            ${{ env.DOCKERHUB_REPO }}:latest
+
+      - name: Build and push (tag + latest)
+        if: github.event_name != 'workflow_dispatch'
         uses: docker/build-push-action@v6
         with:
           context: .
