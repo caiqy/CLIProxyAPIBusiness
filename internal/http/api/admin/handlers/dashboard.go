@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,14 +38,22 @@ func NewDashboardHandler(db *gorm.DB) *DashboardHandler {
 
 // kpiResponse defines the KPI response payload.
 type kpiResponse struct {
-	TotalRequests    int64   `json:"total_requests"`      // Total requests today.
-	RequestsTrend    float64 `json:"requests_trend"`      // Trend vs yesterday.
-	AvgRequestTimeMs int64   `json:"avg_request_time_ms"` // Average request time in ms.
-	RequestTimeTrend float64 `json:"request_time_trend"`  // Trend vs yesterday.
-	SuccessRate      float64 `json:"success_rate"`        // Success rate percentage.
-	SuccessRateTrend float64 `json:"success_rate_trend"`  // Trend vs yesterday.
-	MtdCostMicros    int64   `json:"mtd_cost_micros"`     // Month-to-date cost in micros.
-	CostTrend        float64 `json:"cost_trend"`          // Trend vs last month.
+	TotalRequests     int64   `json:"total_requests"`      // Total requests today.
+	RequestsTrend     float64 `json:"requests_trend"`      // Trend vs yesterday.
+	TodayActiveUsers  int64   `json:"today_active_users"`  // Distinct active users today.
+	ActiveUsersTrend  float64 `json:"active_users_trend"`  // Trend vs yesterday.
+	TodayTokens       int64   `json:"today_tokens"`        // Total tokens today.
+	TodayTokensTrend  float64 `json:"today_tokens_trend"`  // Trend vs yesterday.
+	TodayCachedTokens int64   `json:"today_cached_tokens"` // Cached tokens today.
+	CachedTokensTrend float64 `json:"cached_tokens_trend"` // Trend vs yesterday.
+	TodayCostMicros   int64   `json:"today_cost_micros"`   // Total cost today in micros.
+	TodayCostTrend    float64 `json:"today_cost_trend"`    // Trend vs yesterday.
+	AvgRequestTimeMs  int64   `json:"avg_request_time_ms"` // Average request time in ms.
+	RequestTimeTrend  float64 `json:"request_time_trend"`  // Trend vs yesterday.
+	SuccessRate       float64 `json:"success_rate"`        // Success rate percentage.
+	SuccessRateTrend  float64 `json:"success_rate_trend"`  // Trend vs yesterday.
+	MtdCostMicros     int64   `json:"mtd_cost_micros"`     // Month-to-date cost in micros.
+	CostTrend         float64 `json:"cost_trend"`          // Trend vs last month.
 }
 
 // KPI returns global KPI data for all users
@@ -59,12 +68,20 @@ func (h *DashboardHandler) KPI(c *gin.Context) {
 		Total            int64
 		Failed           int64
 		AvgRequestTimeMs float64
+		ActiveUsers      int64
+		TotalTokens      int64
+		CachedTokens     int64
+		CostMicros       int64
 	}
 	h.db.WithContext(c.Request.Context()).Model(&models.Usage{}).
 		Where("requested_at >= ?", today).
 		Select(`
 			COUNT(*) AS total,
 			SUM(CASE WHEN failed THEN 1 ELSE 0 END) AS failed,
+			COUNT(DISTINCT CASE WHEN user_id IS NULL THEN NULL ELSE user_id END) AS active_users,
+			COALESCE(SUM(total_tokens), 0) AS total_tokens,
+			COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
+			COALESCE(SUM(cost_micros), 0) AS cost_micros,
 			COALESCE(AVG(GREATEST(EXTRACT(EPOCH FROM (created_at - requested_at)) * 1000, 0)), 0) AS avg_request_time_ms
 		`).
 		Scan(&todayStats)
@@ -73,12 +90,20 @@ func (h *DashboardHandler) KPI(c *gin.Context) {
 		Total            int64
 		Failed           int64
 		AvgRequestTimeMs float64
+		ActiveUsers      int64
+		TotalTokens      int64
+		CachedTokens     int64
+		CostMicros       int64
 	}
 	h.db.WithContext(c.Request.Context()).Model(&models.Usage{}).
 		Where("requested_at >= ? AND requested_at < ?", yesterday, today).
 		Select(`
 			COUNT(*) AS total,
 			SUM(CASE WHEN failed THEN 1 ELSE 0 END) AS failed,
+			COUNT(DISTINCT CASE WHEN user_id IS NULL THEN NULL ELSE user_id END) AS active_users,
+			COALESCE(SUM(total_tokens), 0) AS total_tokens,
+			COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
+			COALESCE(SUM(cost_micros), 0) AS cost_micros,
 			COALESCE(AVG(GREATEST(EXTRACT(EPOCH FROM (created_at - requested_at)) * 1000, 0)), 0) AS avg_request_time_ms
 		`).
 		Scan(&yesterdayStats)
@@ -98,6 +123,10 @@ func (h *DashboardHandler) KPI(c *gin.Context) {
 		Scan(&lastMtdCost)
 
 	requestsTrend := calcTrend(float64(yesterdayStats.Total), float64(todayStats.Total))
+	activeUsersTrend := calcTrend(float64(yesterdayStats.ActiveUsers), float64(todayStats.ActiveUsers))
+	todayTokensTrend := calcTrend(float64(yesterdayStats.TotalTokens), float64(todayStats.TotalTokens))
+	cachedTokensTrend := calcTrend(float64(yesterdayStats.CachedTokens), float64(todayStats.CachedTokens))
+	todayCostTrend := calcTrend(float64(yesterdayStats.CostMicros), float64(todayStats.CostMicros))
 	successRate := 100.0
 	if todayStats.Total > 0 {
 		successRate = float64(todayStats.Total-todayStats.Failed) / float64(todayStats.Total) * 100
@@ -113,14 +142,22 @@ func (h *DashboardHandler) KPI(c *gin.Context) {
 	costTrend := calcTrend(float64(lastMtdCost), float64(mtdCost))
 
 	c.JSON(http.StatusOK, kpiResponse{
-		TotalRequests:    todayStats.Total,
-		RequestsTrend:    requestsTrend,
-		AvgRequestTimeMs: avgRequestTimeToday,
-		RequestTimeTrend: requestTimeTrend,
-		SuccessRate:      successRate,
-		SuccessRateTrend: successRateTrend,
-		MtdCostMicros:    mtdCost,
-		CostTrend:        costTrend,
+		TotalRequests:     todayStats.Total,
+		RequestsTrend:     requestsTrend,
+		TodayActiveUsers:  todayStats.ActiveUsers,
+		ActiveUsersTrend:  activeUsersTrend,
+		TodayTokens:       todayStats.TotalTokens,
+		TodayTokensTrend:  todayTokensTrend,
+		TodayCachedTokens: todayStats.CachedTokens,
+		CachedTokensTrend: cachedTokensTrend,
+		TodayCostMicros:   todayStats.CostMicros,
+		TodayCostTrend:    todayCostTrend,
+		AvgRequestTimeMs:  avgRequestTimeToday,
+		RequestTimeTrend:  requestTimeTrend,
+		SuccessRate:       successRate,
+		SuccessRateTrend:  successRateTrend,
+		MtdCostMicros:     mtdCost,
+		CostTrend:         costTrend,
 	})
 }
 
@@ -242,10 +279,35 @@ type transactionItem struct {
 
 // RecentTransactions returns recent transactions for all users
 func (h *DashboardHandler) RecentTransactions(c *gin.Context) {
+	page := 1
+	if v := strings.TrimSpace(c.Query("page")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			page = n
+		}
+	}
+	pageSize := 15
+	if v := strings.TrimSpace(c.Query("page_size")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			pageSize = n
+		}
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	offset := (page - 1) * pageSize
+
+	var total int64
+	base := h.db.WithContext(c.Request.Context()).Model(&models.Usage{})
+	if errCount := base.Session(&gorm.Session{}).Count(&total).Error; errCount != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "query usages failed"})
+		return
+	}
+
 	var usages []models.Usage
-	if errFind := h.db.WithContext(c.Request.Context()).
+	if errFind := base.Session(&gorm.Session{}).
 		Order("requested_at DESC").
-		Limit(20).
+		Limit(pageSize).
+		Offset(offset).
 		Find(&usages).Error; errFind != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "query usages failed"})
 		return
@@ -433,7 +495,12 @@ func (h *DashboardHandler) RecentTransactions(c *gin.Context) {
 		})
 	}
 
-	c.JSON(http.StatusOK, gin.H{"transactions": transactions})
+	c.JSON(http.StatusOK, gin.H{
+		"transactions": transactions,
+		"total":        total,
+		"page":         page,
+		"page_size":    pageSize,
+	})
 }
 
 // calcTrend computes percentage change from a previous value.

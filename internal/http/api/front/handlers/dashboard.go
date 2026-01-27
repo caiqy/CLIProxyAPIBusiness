@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -314,6 +315,23 @@ func (h *DashboardHandler) RecentTransactions(c *gin.Context) {
 		return
 	}
 
+	page := 1
+	if v := strings.TrimSpace(c.Query("page")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			page = n
+		}
+	}
+	pageSize := 15
+	if v := strings.TrimSpace(c.Query("page_size")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			pageSize = n
+		}
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	offset := (page - 1) * pageSize
+
 	var apiKeyIDs []uint64
 	if errFind := h.db.WithContext(c.Request.Context()).Model(&models.APIKey{}).
 		Where("user_id = ?", userID).
@@ -323,16 +341,33 @@ func (h *DashboardHandler) RecentTransactions(c *gin.Context) {
 	}
 
 	if len(apiKeyIDs) == 0 {
-		c.JSON(http.StatusOK, gin.H{"transactions": []transactionItem{}})
+		c.JSON(http.StatusOK, gin.H{
+			"transactions": []transactionItem{},
+			"total":        int64(0),
+			"page":         page,
+			"page_size":    pageSize,
+		})
+		return
+	}
+
+	base := h.db.WithContext(c.Request.Context()).Model(&models.Usage{}).
+		Where("api_key_id IN ?", apiKeyIDs)
+
+	var total int64
+	if errCount := base.Session(&gorm.Session{}).Count(&total).Error; errCount != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "query usages failed"})
 		return
 	}
 
 	var usages []models.Usage
-	h.db.WithContext(c.Request.Context()).
-		Where("api_key_id IN ?", apiKeyIDs).
+	if errFind := base.Session(&gorm.Session{}).
 		Order("requested_at DESC").
-		Limit(20).
-		Find(&usages)
+		Limit(pageSize).
+		Offset(offset).
+		Find(&usages).Error; errFind != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "query usages failed"})
+		return
+	}
 
 	authIDsSet := make(map[uint64]struct{})
 	providersSet := make(map[string]struct{})
@@ -451,7 +486,12 @@ func (h *DashboardHandler) RecentTransactions(c *gin.Context) {
 		})
 	}
 
-	c.JSON(http.StatusOK, gin.H{"transactions": transactions})
+	c.JSON(http.StatusOK, gin.H{
+		"transactions": transactions,
+		"total":        total,
+		"page":         page,
+		"page_size":    pageSize,
+	})
 }
 
 // calcTrend computes percentage change between two values.
