@@ -35,7 +35,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Install web dependencies
-        run: npm ci
+        run: npm ci --prefer-offline --no-audit --fund=false
         working-directory: web
 
       - name: Run GoReleaser
