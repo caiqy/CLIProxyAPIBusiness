@@ -24,6 +24,8 @@ const (
 	RateLimitRedisDBKey = "RATE_LIMIT_REDIS_DB"
 	// RateLimitRedisPrefixKey defines the Redis key prefix for rate limiting.
 	RateLimitRedisPrefixKey = "RATE_LIMIT_REDIS_PREFIX"
+	// UsagesRetentionDaysKey controls how many days to retain usages rows.
+	UsagesRetentionDaysKey = "USAGES_RETENTION_DAYS"
 	// DefaultQuotaPollIntervalSeconds is the fallback poll interval (seconds).
 	DefaultQuotaPollIntervalSeconds = 180
 	// DefaultQuotaPollMaxConcurrency is the fallback max concurrency.
@@ -34,4 +36,6 @@ const (
 	DefaultRateLimit = 0
 	// DefaultRateLimitRedisPrefix is the fallback Redis key prefix.
 	DefaultRateLimitRedisPrefix = "cpab:rl"
+	// DefaultUsagesRetentionDays is the fallback usages retention period.
+	DefaultUsagesRetentionDays = 90
 )

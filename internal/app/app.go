@@ -79,6 +79,9 @@ func RunServer(ctx context.Context, cfg config.AppConfig, defaultPort int) error
 	if errMigrate := db.Migrate(conn); errMigrate != nil {
 		return errMigrate
 	}
+	if errRefreshSettings := internalsettings.RefreshDBConfigSnapshot(ctx, conn); errRefreshSettings != nil {
+		return fmt.Errorf("refresh settings snapshot: %w", errRefreshSettings)
+	}
 
 	initialized, errInit := HasAdminInitialized(conn)
 	if errInit != nil {
@@ -272,6 +275,9 @@ func RunServer(ctx context.Context, cfg config.AppConfig, defaultPort int) error
 		return err
 	}
 	service.RegisterUsagePlugin(internalusage.NewGormUsagePlugin(conn))
+	if cleaner := internalusage.NewUsagesRetentionCleaner(conn); cleaner != nil {
+		cleaner.Start(ctx)
+	}
 	if quotaPoller := quota.NewPoller(conn, coreManager); quotaPoller != nil {
 		quotaPoller.Start(ctx)
 	}

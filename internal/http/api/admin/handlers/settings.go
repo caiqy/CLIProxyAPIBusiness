@@ -2,14 +2,12 @@ package handlers
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"math"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/models"
@@ -39,8 +37,9 @@ var positiveIntSettingKeys = map[string]struct{}{
 }
 
 var nonNegativeIntSettingKeys = map[string]struct{}{
-	internalsettings.RateLimitKey:        {},
-	internalsettings.RateLimitRedisDBKey: {},
+	internalsettings.RateLimitKey:           {},
+	internalsettings.RateLimitRedisDBKey:    {},
+	internalsettings.UsagesRetentionDaysKey: {},
 }
 
 var errPositiveIntegerValue = errors.New("value must be a positive integer")
@@ -80,7 +79,7 @@ func (h *SettingHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "create setting failed"})
 		return
 	}
-	if errRefresh := h.refreshDBConfigSnapshot(c.Request.Context()); errRefresh != nil {
+	if errRefresh := internalsettings.RefreshDBConfigSnapshot(c.Request.Context(), h.db); errRefresh != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "refresh settings snapshot failed"})
 		return
 	}
@@ -159,7 +158,7 @@ func (h *SettingHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "update failed"})
 		return
 	}
-	if errRefresh := h.refreshDBConfigSnapshot(c.Request.Context()); errRefresh != nil {
+	if errRefresh := internalsettings.RefreshDBConfigSnapshot(c.Request.Context(), h.db); errRefresh != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "refresh settings snapshot failed"})
 		return
 	}
@@ -182,41 +181,11 @@ func (h *SettingHandler) Delete(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 		return
 	}
-	if errRefresh := h.refreshDBConfigSnapshot(c.Request.Context()); errRefresh != nil {
+	if errRefresh := internalsettings.RefreshDBConfigSnapshot(c.Request.Context(), h.db); errRefresh != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "refresh settings snapshot failed"})
 		return
 	}
 	c.Status(http.StatusNoContent)
-}
-
-// refreshDBConfigSnapshot rebuilds the in-memory settings snapshot from the DB.
-func (h *SettingHandler) refreshDBConfigSnapshot(ctx context.Context) error {
-	var rows []models.Setting
-	if errFind := h.db.WithContext(ctx).
-		Select("key", "value", "updated_at").
-		Order("key ASC").
-		Find(&rows).Error; errFind != nil {
-		return errFind
-	}
-
-	values := make(map[string]json.RawMessage, len(rows))
-	maxUpdatedAt := time.Time{}
-	maxUpdatedKey := ""
-	for _, row := range rows {
-		key := strings.TrimSpace(row.Key)
-		if key == "" {
-			continue
-		}
-		values[key] = row.Value
-		rowUpdatedAt := row.UpdatedAt.UTC()
-		if rowUpdatedAt.After(maxUpdatedAt) || (rowUpdatedAt.Equal(maxUpdatedAt) && key > maxUpdatedKey) {
-			maxUpdatedAt = rowUpdatedAt
-			maxUpdatedKey = key
-		}
-	}
-
-	internalsettings.StoreDBConfig(maxUpdatedAt, values)
-	return nil
 }
 
 func validateSettingValue(key string, value json.RawMessage) error {

@@ -104,6 +104,9 @@ func migratePostgres(conn *gorm.DB) error {
 	if errSeed := ensureRateLimitSetting(conn); errSeed != nil {
 		return errSeed
 	}
+	if errSeed := ensureUsagesRetentionSetting(conn); errSeed != nil {
+		return errSeed
+	}
 	if errAuthGroup := migrateAuthGroupIDsPostgres(conn); errAuthGroup != nil {
 		return errAuthGroup
 	}
@@ -919,6 +922,9 @@ func migrateSQLite(conn *gorm.DB) error {
 	if errSeed := ensureRateLimitSetting(conn); errSeed != nil {
 		return errSeed
 	}
+	if errSeed := ensureUsagesRetentionSetting(conn); errSeed != nil {
+		return errSeed
+	}
 	if errAuthGroup := migrateAuthGroupIDsSQLite(conn); errAuthGroup != nil {
 		return errAuthGroup
 	}
@@ -1714,6 +1720,11 @@ func ensureAutoAssignProxySetting(conn *gorm.DB) error {
 // ensureRateLimitSetting ensures RATE_LIMIT exists with defaults.
 func ensureRateLimitSetting(conn *gorm.DB) error {
 	return ensureIntSetting(conn, internalsettings.RateLimitKey, internalsettings.DefaultRateLimit)
+}
+
+// ensureUsagesRetentionSetting ensures USAGES_RETENTION_DAYS exists with defaults.
+func ensureUsagesRetentionSetting(conn *gorm.DB) error {
+	return ensureIntSetting(conn, internalsettings.UsagesRetentionDaysKey, internalsettings.DefaultUsagesRetentionDays)
 }
 
 // ensureIntSetting ensures an integer setting exists and defaults when empty.
