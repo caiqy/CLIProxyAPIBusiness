@@ -10,7 +10,7 @@ require (
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/pquerna/otp v1.4.0
 	github.com/redis/go-redis/v9 v9.7.3
-	github.com/router-for-me/CLIProxyAPI/v6 v6.7.24
+	github.com/router-for-me/CLIProxyAPI/v6 v6.7.34
 	github.com/sirupsen/logrus v1.9.3
 	golang.org/x/crypto v0.45.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
@@ -62,6 +62,7 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect
+	github.com/refraction-networking/utls v1.8.2 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966 // indirect
