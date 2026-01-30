@@ -14,7 +14,9 @@ FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 
+# Copy go.mod/go.sum and the local replace target (submodule) first
 COPY go.mod go.sum ./
+COPY third_party/CLIProxyAPIPlus ./third_party/CLIProxyAPIPlus
 
 RUN go mod download
 
