@@ -60,8 +60,19 @@ streaming:
   keepalive-seconds: 0
   bootstrap-retries: 0
 
-# 非流式“空行保活”（秒）
+# 非流式"空行保活"（秒）
 nonstream-keepalive-interval: 0
+
+# 上游请求超时配置（可选，不配置时使用默认值）
+# 这些超时适用于所有 provider executor（codex、claude、gemini、kiro 等）
+upstream-timeouts:
+  # 连接超时：TCP 连接建立 + TLS 握手的最大等待时间（秒）
+  # 默认值：10 秒。设为 0 表示使用 Go 默认值（无显式超时）
+  connect-timeout-seconds: 10
+  # 响应头超时：发送请求后等待响应头/首包的最大时间（秒）
+  # 这是解决"请求卡住数分钟"问题的关键超时
+  # 默认值：30 秒。设为 0 表示使用 Go 默认值（无显式超时）
+  response-header-timeout-seconds: 30
 
 # 冷却/重试
 disable-cooling: true
