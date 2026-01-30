@@ -1,0 +1,214 @@
+# cpab 额外配置（cpab 自己读取）
+database-dsn: "postgres://cpab:insecure-change-me@127.0.0.1:5432/cpab?sslmode=disable"
+# 或者：
+# database:
+#   dsn: "postgres://cpab:insecure-change-me@127.0.0.1:5432/cpab?sslmode=disable"
+
+jwt:
+  secret: "insecure-jwt-secret-change-me"
+  expiry: "720h"
+
+# ===== CLIProxyAPI v6.7.24 配置（cpab 继承；下面字段来自 CLIProxyAPI）=====
+
+# 监听地址：空字符串表示 0.0.0.0
+host: ""
+port: 8318
+
+tls:
+  enable: false
+  cert: ""
+  key: ""
+
+remote-management:
+  allow-remote: false
+  secret-key: ""
+  disable-control-panel: true
+  panel-github-repository: "https://github.com/router-for-me/Cli-Proxy-API-Management-Center"
+
+# 认证目录（保存各类 OAuth/token 文件）
+auth-dir: "~/.cli-proxy-api"
+
+# 访问本服务的 API keys（客户端请求带 Authorization: Bearer <key>）
+api-keys:
+  - "your-api-key-1"
+
+debug: false
+commercial-mode: true
+logging-to-file: false
+logs-max-total-size-mb: 0
+usage-statistics-enabled: false
+
+# 全局上游代理（可选；单个 key/provider 也可覆盖）
+proxy-url: ""
+
+# 模型前缀控制（多租户/多组 key 时用）
+force-model-prefix: false
+
+# 记录每次请求/响应明细到文件（会产生日志文件，建议配合 logging-to-file）
+request-log: false
+
+# 访问控制提供方（可选，不配则只用 api-keys）
+auth:
+  providers: []
+  # - name: "config-inline"
+  #   type: "config-api-key"
+  #   api-keys:
+  #     - "your-api-key-1"
+
+# 流式行为
+streaming:
+  keepalive-seconds: 0
+  bootstrap-retries: 0
+
+# 非流式“空行保活”（秒）
+nonstream-keepalive-interval: 0
+
+# 冷却/重试
+disable-cooling: true
+request-retry: 3
+max-retry-interval: 30
+
+quota-exceeded:
+  switch-project: true
+  switch-preview-model: true
+
+routing:
+  strategy: "round-robin" # round-robin / fill-first
+
+# WebSocket API 认证开关
+ws-auth: false
+
+# Codex 指令注入开关
+codex-instructions-enabled: false
+
+# ===== 各类上游凭据（按需启用）=====
+
+gemini-api-key: []
+# - api-key: "AIzaSy..."
+#   priority: 0
+#   prefix: "teamA"
+#   base-url: "https://generativelanguage.googleapis.com"
+#   proxy-url: ""
+#   headers:
+#     X-Custom-Header: "custom-value"
+#   models:
+#     - name: "gemini-2.5-flash"
+#       alias: "gemini-flash"
+#   excluded-models:
+#     - "gemini-2.5-pro"
+#     - "gemini-2.5-*"
+#     - "*-preview"
+#     - "*flash*"
+
+codex-api-key: []
+# - api-key: "sk-..."
+#   priority: 0
+#   prefix: "teamA"
+#   base-url: "https://www.example.com"
+#   proxy-url: ""
+#   headers:
+#     X-Custom-Header: "custom-value"
+#   models:
+#     - name: "gpt-5-codex"
+#       alias: "codex-latest"
+#   excluded-models:
+#     - "gpt-5.1"
+#     - "gpt-5-*"
+#     - "*-mini"
+#     - "*codex*"
+
+claude-api-key: []
+# - api-key: "sk-ant-..."
+#   priority: 0
+#   prefix: "teamA"
+#   base-url: "https://www.example.com"
+#   proxy-url: ""
+#   headers:
+#     X-Custom-Header: "custom-value"
+#   models:
+#     - name: "claude-3-5-sonnet-20241022"
+#       alias: "claude-sonnet-latest"
+#   excluded-models:
+#     - "claude-3-*"
+#     - "*-thinking"
+#   cloak:
+#     mode: "auto"       # auto / always / never
+#     strict-mode: false
+#     sensitive-words:
+#       - "API"
+#       - "proxy"
+
+openai-compatibility: []
+# - name: "openrouter"
+#   priority: 0
+#   prefix: "teamA"
+#   base-url: "https://openrouter.ai/api/v1"
+#   headers:
+#     X-Custom-Header: "custom-value"
+#   api-key-entries:
+#     - api-key: "sk-or-v1-..."
+#       proxy-url: ""
+#   models:
+#     - name: "moonshotai/kimi-k2:free"
+#       alias: "kimi-k2"
+
+vertex-api-key: []
+# - api-key: "vk-..."
+#   priority: 0
+#   prefix: "teamA"
+#   base-url: "https://example.com/api"
+#   proxy-url: ""
+#   headers:
+#     X-Custom-Header: "custom-value"
+#   models:
+#     - name: "gemini-2.5-flash"
+#       alias: "vertex-flash"
+
+# Amp 集成
+ampcode:
+  upstream-url: "https://ampcode.com"
+  upstream-api-key: ""
+  upstream-api-keys: []
+  # - upstream-api-key: "amp_key_for_team_a"
+  #   api-keys:
+  #     - "your-api-key-1"
+  restrict-management-to-localhost: false
+  force-model-mappings: false
+  model-mappings: []
+  # - from: "claude-opus-4-5-20251101"
+  #   to: "gemini-2.5-pro"
+  #   regex: false
+
+# OAuth 模型控制（可选）
+oauth-excluded-models: {}
+# oauth-excluded-models:
+#   codex: ["gpt-5.1"]
+#   claude: ["claude-opus-4-5-20251101"]
+
+oauth-model-alias: {}
+# oauth-model-alias:
+#   codex:
+#     - name: "gpt-5-codex"
+#       alias: "codex-latest"
+#       fork: false
+
+# Payload 规则（可选）
+payload:
+  default: []
+  default-raw: []
+  override: []
+  override-raw: []
+  # 规则示例：
+  # default:
+  #   - models:
+  #       - name: "gpt-5.2"
+  #         protocol: "openai"
+  #     params:
+  #       temperature: 0.7
+
+# 兼容旧字段（仍可解析；一般不建议新配置继续用）
+# generative-language-api-key: ["AIzaSy..."]
+# amp-upstream-url: "https://ampcode.com"
+# amp-upstream-api-key: ""
+# amp-restrict-management-to-localhost: false
+# amp-model-mappings: []
