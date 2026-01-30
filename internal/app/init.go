@@ -166,7 +166,7 @@ type configFile struct {
 	Port           int    `yaml:"port"`
 	DatabaseDSN    string `yaml:"database-dsn"`
 	Debug          bool   `yaml:"debug"`
-	CommercialMode bool   `yaml:"commercial-mode"`
+	CommercialMode *bool  `yaml:"commercial-mode,omitempty"`
 	LoggingToFile  bool   `yaml:"logging-to-file"`
 	JWT            jwtCfg `yaml:"jwt"`
 	TLS            tlsCfg `yaml:"tls"`
@@ -201,7 +201,7 @@ func WriteConfigFile(configPath string, dsn string, port int) error {
 		Port:           port,
 		DatabaseDSN:    dsn,
 		Debug:          false,
-		CommercialMode: false,
+		CommercialMode: nil,
 		LoggingToFile:  false,
 		JWT: jwtCfg{
 			Secret: generateJWTSecret(),

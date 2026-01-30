@@ -37,6 +37,7 @@ import (
 	sdkcliproxy "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy"
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
 	log "github.com/sirupsen/logrus"
+	"gopkg.in/yaml.v3"
 )
 
 // CreateAPIKeyParams holds inputs for API key creation.
@@ -103,7 +104,18 @@ func RunServer(ctx context.Context, cfg config.AppConfig, defaultPort int) error
 	if err != nil {
 		return err
 	}
-	coreCfg.CommercialMode = true
+	// Respect config.yaml when commercial-mode is explicitly set.
+	// If the field is omitted, default to true (enterprise-safe defaults).
+	// Note: CLIProxyAPI uses commercial-mode to disable some high-overhead middleware
+	// (including request-log). Users may explicitly set commercial-mode: false for diagnostics.
+	if commercialModeProvided, errProbe := isCommercialModeProvided(configPath); errProbe == nil {
+		if !commercialModeProvided {
+			coreCfg.CommercialMode = true
+		}
+	} else {
+		// If we cannot probe the YAML (e.g. file missing), fall back to safe default.
+		coreCfg.CommercialMode = true
+	}
 	coreCfg.DisableCooling = true
 	coreCfg.RemoteManagement.DisableControlPanel = true
 	coreCfg.AuthDir, _ = os.Getwd()
@@ -289,6 +301,24 @@ func RunServer(ctx context.Context, cfg config.AppConfig, defaultPort int) error
 
 	log.Infof("starting relay with config=%s", cfg.ConfigPath)
 	return service.Run(ctx)
+}
+
+// isCommercialModeProvided reports whether config.yaml explicitly sets the top-level
+// commercial-mode key. When absent, cpab applies a default of true.
+func isCommercialModeProvided(configPath string) (bool, error) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return false, err
+	}
+	// Use a pointer to distinguish "false" from "not provided".
+	type probe struct {
+		CommercialMode *bool `yaml:"commercial-mode"`
+	}
+	var p probe
+	if errUnmarshal := yaml.Unmarshal(data, &p); errUnmarshal != nil {
+		return false, errUnmarshal
+	}
+	return p.CommercialMode != nil, nil
 }
 
 func loadCoreConfig(configPath string) (*sdkconfig.Config, error) {
