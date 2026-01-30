@@ -2,3 +2,6 @@
 	path = web
 	url = https://github.com/caiqy/cpab-web.git
 	branch = main
+[submodule "third_party/CLIProxyAPIPlus"]
+	path = third_party/CLIProxyAPIPlus
+	url = https://github.com/caiqy/CLIProxyAPIPlus.git
