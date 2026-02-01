@@ -10,7 +10,7 @@ require (
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/pquerna/otp v1.4.0
 	github.com/redis/go-redis/v9 v9.7.3
-	github.com/router-for-me/CLIProxyAPI/v6 v6.7.24
+	github.com/router-for-me/CLIProxyAPI/v6 v6.7.34
 	github.com/sirupsen/logrus v1.9.3
 	golang.org/x/crypto v0.45.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
