@@ -52,7 +52,7 @@ jobs:
             COMMIT=${{ env.COMMIT }}
             BUILD_DATE=${{ env.BUILD_DATE }}
           tags: |
-            ${{ env.DOCKERHUB_REPO }}:latest
+            ${{ env.DOCKERHUB_REPO }}:latest-amd64
 
       - name: Build and push (tag + latest)
         if: github.event_name != 'workflow_dispatch'
@@ -89,10 +89,30 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Generate Build Metadata
         run: |
-          echo VERSION=`git describe --tags --always --dirty` >> $GITHUB_ENV
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            echo VERSION=manual >> $GITHUB_ENV
+          else
+            echo VERSION=`git describe --tags --always --dirty` >> $GITHUB_ENV
+          fi
           echo COMMIT=`git rev-parse --short HEAD` >> $GITHUB_ENV
           echo BUILD_DATE=`date -u +%Y-%m-%dT%H:%M:%SZ` >> $GITHUB_ENV
-      - name: Build and push (arm64)
+
+      - name: Build and push (manual latest)
+        if: github.event_name == 'workflow_dispatch'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ env.VERSION }}
+            COMMIT=${{ env.COMMIT }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+          tags: |
+            ${{ env.DOCKERHUB_REPO }}:latest-arm64
+
+      - name: Build and push (tag + latest)
+        if: github.event_name != 'workflow_dispatch'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -123,7 +143,11 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Generate Build Metadata
         run: |
-          echo VERSION=`git describe --tags --always --dirty` >> $GITHUB_ENV
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            echo VERSION=manual >> $GITHUB_ENV
+          else
+            echo VERSION=`git describe --tags --always --dirty` >> $GITHUB_ENV
+          fi
           echo COMMIT=`git rev-parse --short HEAD` >> $GITHUB_ENV
           echo BUILD_DATE=`date -u +%Y-%m-%dT%H:%M:%SZ` >> $GITHUB_ENV
       - name: Create and push multi-arch manifests
@@ -132,10 +156,12 @@ jobs:
             --tag "${DOCKERHUB_REPO}:latest" \
             "${DOCKERHUB_REPO}:latest-amd64" \
             "${DOCKERHUB_REPO}:latest-arm64"
-          docker buildx imagetools create \
-            --tag "${DOCKERHUB_REPO}:${VERSION}" \
-            "${DOCKERHUB_REPO}:${VERSION}-amd64" \
-            "${DOCKERHUB_REPO}:${VERSION}-arm64"
+          if [ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]; then
+            docker buildx imagetools create \
+              --tag "${DOCKERHUB_REPO}:${VERSION}" \
+              "${DOCKERHUB_REPO}:${VERSION}-amd64" \
+              "${DOCKERHUB_REPO}:${VERSION}-arm64"
+          fi
       - name: Cleanup temporary tags
         continue-on-error: true
         env:
