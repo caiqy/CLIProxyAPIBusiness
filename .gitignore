@@ -27,6 +27,7 @@ var/
 .agent/
 .agents/
 .opencode/
+openspec/
 .bmad/
 _bmad/
 _bmad-output/
