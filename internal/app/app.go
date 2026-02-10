@@ -79,6 +79,10 @@ func RunServer(ctx context.Context, cfg config.AppConfig, defaultPort int) error
 	if errMigrate := db.Migrate(conn); errMigrate != nil {
 		return errMigrate
 	}
+	coreCfg, err := loadCoreConfig(configPath)
+	if err != nil {
+		return err
+	}
 
 	initialized, errInit := HasAdminInitialized(conn)
 	if errInit != nil {
@@ -96,10 +100,6 @@ func RunServer(ctx context.Context, cfg config.AppConfig, defaultPort int) error
 	authStore := store.NewGormAuthStore(conn)
 	sdkAuth.RegisterTokenStore(authStore)
 
-	coreCfg, err := loadCoreConfig(configPath)
-	if err != nil {
-		return err
-	}
 	coreCfg.CommercialMode = true
 	coreCfg.DisableCooling = true
 	coreCfg.RemoteManagement.DisableControlPanel = true
@@ -110,25 +110,7 @@ func RunServer(ctx context.Context, cfg config.AppConfig, defaultPort int) error
 		}
 		coreCfg.Port = defaultPort
 	}
-	if len(coreCfg.Access.Providers) == 0 {
-		coreCfg.Access.Providers = []sdkconfig.AccessProvider{
-			{
-				Name: "db",
-				Type: access.ProviderTypeDBAPIKey,
-				Config: map[string]any{
-					"bypass-path-prefixes": []string{"/healthz", "/v0/management"},
-					"header":               "Authorization",
-					"scheme":               "Bearer",
-					"allow-x-api-key":      true,
-				},
-			},
-		}
-	}
 
-	enforcementAccessMgr, errBuildAccessMgr := buildAccessManager(coreCfg)
-	if errBuildAccessMgr != nil {
-		return errBuildAccessMgr
-	}
 	serverAccessMgr := sdkaccess.NewManager()
 
 	coreManager := coreauth.NewManager(authStore, internalauth.NewSelector(conn), internalauth.NewStatusCodeHook())
@@ -164,7 +146,6 @@ func RunServer(ctx context.Context, cfg config.AppConfig, defaultPort int) error
 					c.Abort()
 				},
 				webUIRootMiddleware(webBundle.IndexHTML),
-				relayhttp.CLIProxyAuthMiddleware(enforcementAccessMgr, coreCfg.WebsocketAuth),
 				relayhttp.CLIProxyModelsMiddleware(conn, modelStore),
 			),
 			sdkapi.WithRouterConfigurator(func(engine *gin.Engine, baseHandler *sdkhandlers.BaseAPIHandler, cfg *sdkconfig.Config) {
@@ -279,7 +260,7 @@ func RunServer(ctx context.Context, cfg config.AppConfig, defaultPort int) error
 		modelSyncer.Start(ctx)
 	}
 
-	serverAccessMgr.SetProviders(nil)
+	// serverAccessMgr.SetProviders(nil)
 
 	log.Infof("starting relay with config=%s", cfg.ConfigPath)
 	return service.Run(ctx)
@@ -336,11 +317,7 @@ func buildAccessManager(cfg *sdkconfig.Config) (*sdkaccess.Manager, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("nil config")
 	}
-	providers, err := sdkaccess.BuildProviders(&cfg.SDKConfig)
-	if err != nil {
-		return nil, err
-	}
 	manager := sdkaccess.NewManager()
-	manager.SetProviders(providers)
+	manager.SetProviders(sdkaccess.RegisteredProviders())
 	return manager, nil
 }

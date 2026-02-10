@@ -3,7 +3,6 @@ package access
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,7 +11,6 @@ import (
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/models"
 
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v6/sdk/access"
-	"github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
 	"gorm.io/gorm"
 )
 
@@ -37,59 +35,19 @@ type DBAPIKeyProvider struct {
 
 // RegisterDBAPIKeyProvider registers the DB-backed API key provider with the SDK registry.
 func RegisterDBAPIKeyProvider(db *gorm.DB) {
-	sdkaccess.RegisterProvider(ProviderTypeDBAPIKey, func(cfg *config.AccessProvider, _ *config.SDKConfig) (sdkaccess.Provider, error) {
-		if db == nil {
-			return nil, fmt.Errorf("db api key provider: nil db")
-		}
-		p := &DBAPIKeyProvider{
-			db:   db,
-			name: ProviderTypeDBAPIKey,
+	if db == nil {
+		return
+	}
 
-			header:       "Authorization",
-			scheme:       "Bearer",
-			allowXAPIKey: true,
+	sdkaccess.RegisterProvider(ProviderTypeDBAPIKey, &DBAPIKeyProvider{
+		db:   db,
+		name: ProviderTypeDBAPIKey,
 
-			bypassPathPrefixes: []string{"/healthz", "/v0/management"},
-		}
-		if cfg != nil {
-			if strings.TrimSpace(cfg.Name) != "" {
-				p.name = strings.TrimSpace(cfg.Name)
-			}
-			if cfg.Config != nil {
-				if v, ok := cfg.Config["header"].(string); ok && strings.TrimSpace(v) != "" {
-					p.header = strings.TrimSpace(v)
-				}
-				if v, ok := cfg.Config["scheme"].(string); ok && strings.TrimSpace(v) != "" {
-					p.scheme = strings.TrimSpace(v)
-				}
-				if v, ok := cfg.Config["allow-x-api-key"].(bool); ok {
-					p.allowXAPIKey = v
-				}
-				switch rawList := cfg.Config["bypass-path-prefixes"].(type) {
-				case []any:
-					p.bypassPathPrefixes = make([]string, 0, len(rawList))
-					for _, raw := range rawList {
-						s, ok := raw.(string)
-						if !ok {
-							continue
-						}
-						trimmed := strings.TrimSpace(s)
-						if trimmed != "" {
-							p.bypassPathPrefixes = append(p.bypassPathPrefixes, trimmed)
-						}
-					}
-				case []string:
-					p.bypassPathPrefixes = make([]string, 0, len(rawList))
-					for _, raw := range rawList {
-						trimmed := strings.TrimSpace(raw)
-						if trimmed != "" {
-							p.bypassPathPrefixes = append(p.bypassPathPrefixes, trimmed)
-						}
-					}
-				}
-			}
-		}
-		return p, nil
+		header:       "Authorization",
+		scheme:       "Bearer",
+		allowXAPIKey: true,
+
+		bypassPathPrefixes: []string{"/healthz", "/v0/management"},
 	})
 }
 
@@ -97,24 +55,27 @@ func RegisterDBAPIKeyProvider(db *gorm.DB) {
 func (p *DBAPIKeyProvider) Identifier() string { return p.name }
 
 // Authenticate validates the request API key and returns the access result.
-func (p *DBAPIKeyProvider) Authenticate(ctx context.Context, r *http.Request) (*sdkaccess.Result, error) {
+func (p *DBAPIKeyProvider) Authenticate(ctx context.Context, r *http.Request) (*sdkaccess.Result, *sdkaccess.AuthError) {
 	if p == nil || p.db == nil || r == nil {
-		return nil, sdkaccess.ErrNotHandled
+		return nil, sdkaccess.NewNotHandledError()
 	}
 
 	path := ""
 	if r.URL != nil {
 		path = r.URL.Path
 	}
+	if !requiresDBAPIKeyAuth(path) {
+		return nil, nil
+	}
 	for _, prefix := range p.bypassPathPrefixes {
-		if prefix != "" && strings.HasPrefix(path, prefix) {
+		if hasPathPrefix(path, prefix) {
 			return nil, nil
 		}
 	}
 
 	token := extractToken(r, p.header, p.scheme, p.allowXAPIKey)
 	if token == "" {
-		return nil, sdkaccess.ErrNoCredentials
+		return nil, sdkaccess.NewNoCredentialsError()
 	}
 
 	var apiKey models.APIKey
@@ -125,22 +86,22 @@ func (p *DBAPIKeyProvider) Authenticate(ctx context.Context, r *http.Request) (*
 	switch {
 	case err == nil:
 	case errors.Is(err, gorm.ErrRecordNotFound):
-		return nil, sdkaccess.ErrInvalidCredential
+		return nil, sdkaccess.NewInvalidCredentialError()
 	default:
-		return nil, fmt.Errorf("db api key provider: query failed: %w", err)
+		return nil, sdkaccess.NewInternalAuthError("db api key provider query failed", err)
 	}
 
 	if apiKey.User != nil {
 		if apiKey.User.Disabled {
-			return nil, sdkaccess.ErrInvalidCredential
+			return nil, sdkaccess.NewInvalidCredentialError()
 		}
 		if apiKey.UserID != nil {
 			ok, errBalance := hasValidBillOrPrepaidBalance(ctx, p.db, *apiKey.UserID)
 			if errBalance != nil {
-				return nil, fmt.Errorf("db api key provider: balance check failed: %w", errBalance)
+				return nil, sdkaccess.NewInternalAuthError("db api key provider balance check failed", errBalance)
 			}
 			if !ok {
-				return nil, ErrInsufficientBalance
+				return nil, sdkaccess.NewInternalAuthError("insufficient balance", ErrInsufficientBalance)
 			}
 		}
 	}
@@ -197,6 +158,35 @@ func extractToken(r *http.Request, header string, scheme string, allowXAPIKey bo
 		}
 	}
 	return ""
+}
+
+// requiresDBAPIKeyAuth determines whether DB API key auth should be enforced.
+func requiresDBAPIKeyAuth(path string) bool {
+	if hasPathPrefix(path, "/v1") {
+		return true
+	}
+	if hasPathPrefix(path, "/v1beta") {
+		return true
+	}
+	if hasPathPrefix(path, "/api") {
+		return true
+	}
+	return false
+}
+
+// hasPathPrefix checks a prefix match on a path boundary.
+func hasPathPrefix(path string, prefix string) bool {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return false
+	}
+	if !strings.HasPrefix(path, prefix) {
+		return false
+	}
+	if len(path) == len(prefix) {
+		return true
+	}
+	return path[len(prefix)] == '/'
 }
 
 // hasValidBillOrPrepaidBalance checks if a user has active bill quota or prepaid balance.
