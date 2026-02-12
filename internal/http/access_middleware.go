@@ -18,8 +18,8 @@ func AccessAuthMiddleware(manager *sdkaccess.Manager) gin.HandlerFunc {
 			return
 		}
 
-		result, err := manager.Authenticate(c.Request.Context(), c.Request)
-		if err == nil {
+		result, authErr := manager.Authenticate(c.Request.Context(), c.Request)
+		if authErr == nil {
 			if result != nil {
 				c.Set("apiKey", result.Principal)
 				c.Set("accessProvider", result.Provider)
@@ -32,19 +32,19 @@ func AccessAuthMiddleware(manager *sdkaccess.Manager) gin.HandlerFunc {
 		}
 
 		switch {
-		case errors.Is(err, sdkaccess.ErrNoCredentials):
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Missing API key"})
-		case errors.Is(err, sdkaccess.ErrInvalidCredential):
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
-		case errors.Is(err, access.ErrDailyMaxUsageExceeded):
+		case errors.Is(authErr, access.ErrDailyMaxUsageExceeded):
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 				"error": "Daily max usage exceeded",
 				"code":  "daily_max_usage_exceeded",
 			})
-		case errors.Is(err, access.ErrInsufficientBalance):
+		case errors.Is(authErr, access.ErrInsufficientBalance):
 			c.AbortWithStatusJSON(http.StatusPaymentRequired, gin.H{"error": "Insufficient balance"})
+		case sdkaccess.IsAuthErrorCode(authErr, sdkaccess.AuthErrorCodeNoCredentials):
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Missing API key"})
+		case sdkaccess.IsAuthErrorCode(authErr, sdkaccess.AuthErrorCodeInvalidCredential):
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
 		default:
-			log.WithError(err).Error("access auth middleware error")
+			log.WithError(authErr).Error("access auth middleware error")
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Authentication service error"})
 		}
 	}

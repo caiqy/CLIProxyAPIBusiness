@@ -125,25 +125,13 @@ func RunServer(ctx context.Context, cfg config.AppConfig, defaultPort int) error
 		}
 		coreCfg.Port = defaultPort
 	}
-	if len(coreCfg.Access.Providers) == 0 {
-		coreCfg.Access.Providers = []sdkconfig.AccessProvider{
-			{
-				Name: "db",
-				Type: access.ProviderTypeDBAPIKey,
-				Config: map[string]any{
-					"bypass-path-prefixes": []string{"/healthz", "/v0/management"},
-					"header":               "Authorization",
-					"scheme":               "Bearer",
-					"allow-x-api-key":      true,
-				},
-			},
-		}
-	}
 
-	enforcementAccessMgr, errBuildAccessMgr := buildAccessManager(coreCfg)
-	if errBuildAccessMgr != nil {
-		return errBuildAccessMgr
-	}
+	// cpab 侧负责鉴权（DB API key），因此：
+	// - enforcementAccessMgr 用于我们注入的 Gin 中间件
+	// - serverAccessMgr 传给 CLIProxyAPIPlus runtime，并在 Build() 后清空，避免重复鉴权
+	enforcementAccessMgr := sdkaccess.NewManager()
+	enforcementAccessMgr.SetProviders(sdkaccess.RegisteredProviders())
+
 	serverAccessMgr := sdkaccess.NewManager()
 
 	coreManager := coreauth.NewManager(authStore, internalauth.NewSelector(conn), internalauth.NewStatusCodeHook())
@@ -365,18 +353,4 @@ func isAPIRoute(requestPath string) bool {
 		}
 	}
 	return false
-}
-
-// buildAccessManager builds an access manager from SDK config providers.
-func buildAccessManager(cfg *sdkconfig.Config) (*sdkaccess.Manager, error) {
-	if cfg == nil {
-		return nil, fmt.Errorf("nil config")
-	}
-	providers, err := sdkaccess.BuildProviders(&cfg.SDKConfig)
-	if err != nil {
-		return nil, err
-	}
-	manager := sdkaccess.NewManager()
-	manager.SetProviders(providers)
-	return manager, nil
 }

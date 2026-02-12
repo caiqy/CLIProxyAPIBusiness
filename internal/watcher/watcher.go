@@ -20,7 +20,6 @@ import (
 	sdkcliproxy "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
-	internalaccess "github.com/router-for-me/CLIProxyAPIBusiness/internal/access"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/modelmapping"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/models"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/providerkeys"
@@ -306,7 +305,6 @@ func (w *dbWatcher) pollConfig(ctx context.Context) {
 		log.WithError(errLoad).Warn("db watcher: load config failed")
 		return
 	}
-	ensureDBAccessProvider(cfg)
 	cfg.RemoteManagement.DisableControlPanel = true
 	cfg.AuthDir, _ = os.Getwd()
 
@@ -450,28 +448,6 @@ func (w *dbWatcher) pollProviderKeys(ctx context.Context, force bool) {
 	w.oauthHasLatest = hasMapping
 	w.oauthLatestAt = mappingAt
 	w.oauthLatestID = mappingID
-}
-
-// ensureDBAccessProvider injects a DB access provider when none are configured.
-func ensureDBAccessProvider(cfg *sdkconfig.Config) {
-	if cfg == nil {
-		return
-	}
-	if len(cfg.Access.Providers) > 0 {
-		return
-	}
-	cfg.Access.Providers = []sdkconfig.AccessProvider{
-		{
-			Name: "db",
-			Type: internalaccess.ProviderTypeDBAPIKey,
-			Config: map[string]any{
-				"bypass-path-prefixes": []string{"/healthz", "/v0/management"},
-				"header":               "Authorization",
-				"scheme":               "Bearer",
-				"allow-x-api-key":      true,
-			},
-		},
-	}
 }
 
 // markForceAuth flags that auths should be polled immediately.
