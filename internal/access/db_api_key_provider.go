@@ -3,7 +3,6 @@ package access
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -40,11 +39,10 @@ type DBAPIKeyProvider struct {
 // RegisterDBAPIKeyProvider registers the DB-backed API key provider with the SDK registry.
 func RegisterDBAPIKeyProvider(db *gorm.DB) {
 	if db == nil {
-		// If the DB is unavailable, keep the provider unregistered.
 		return
 	}
 
-	p := &DBAPIKeyProvider{
+	sdkaccess.RegisterProvider(ProviderTypeDBAPIKey, &DBAPIKeyProvider{
 		db:   db,
 		name: ProviderTypeDBAPIKey,
 
@@ -53,9 +51,7 @@ func RegisterDBAPIKeyProvider(db *gorm.DB) {
 		allowXAPIKey: true,
 
 		bypassPathPrefixes: []string{"/healthz", "/v0/management"},
-	}
-
-	sdkaccess.RegisterProvider(ProviderTypeDBAPIKey, p)
+	})
 }
 
 // Identifier returns the configured provider name.
@@ -71,8 +67,11 @@ func (p *DBAPIKeyProvider) Authenticate(ctx context.Context, r *http.Request) (*
 	if r.URL != nil {
 		path = r.URL.Path
 	}
+	if !requiresDBAPIKeyAuth(path) {
+		return nil, nil
+	}
 	for _, prefix := range p.bypassPathPrefixes {
-		if prefix != "" && strings.HasPrefix(path, prefix) {
+		if hasPathPrefix(path, prefix) {
 			return nil, nil
 		}
 	}
@@ -92,7 +91,7 @@ func (p *DBAPIKeyProvider) Authenticate(ctx context.Context, r *http.Request) (*
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		return nil, sdkaccess.NewInvalidCredentialError()
 	default:
-		return nil, sdkaccess.NewInternalAuthError("Authentication service error", fmt.Errorf("db api key provider: query failed: %w", err))
+		return nil, sdkaccess.NewInternalAuthError("db api key provider query failed", err)
 	}
 
 	if apiKey.User != nil {
@@ -102,10 +101,10 @@ func (p *DBAPIKeyProvider) Authenticate(ctx context.Context, r *http.Request) (*
 		if apiKey.UserID != nil {
 			ok, errBalance := hasValidBillOrPrepaidBalance(ctx, p.db, *apiKey.UserID)
 			if errBalance != nil {
-				return nil, sdkaccess.NewInternalAuthError("Authentication service error", fmt.Errorf("db api key provider: balance check failed: %w", errBalance))
+				return nil, sdkaccess.NewInternalAuthError("db api key provider balance check failed", errBalance)
 			}
 			if !ok {
-				return nil, sdkaccess.NewInternalAuthError("Insufficient balance", ErrInsufficientBalance)
+				return nil, sdkaccess.NewInternalAuthError("insufficient balance", ErrInsufficientBalance)
 			}
 		}
 	}
@@ -162,6 +161,35 @@ func extractToken(r *http.Request, header string, scheme string, allowXAPIKey bo
 		}
 	}
 	return ""
+}
+
+// requiresDBAPIKeyAuth determines whether DB API key auth should be enforced.
+func requiresDBAPIKeyAuth(path string) bool {
+	if hasPathPrefix(path, "/v1") {
+		return true
+	}
+	if hasPathPrefix(path, "/v1beta") {
+		return true
+	}
+	if hasPathPrefix(path, "/api") {
+		return true
+	}
+	return false
+}
+
+// hasPathPrefix checks a prefix match on a path boundary.
+func hasPathPrefix(path string, prefix string) bool {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return false
+	}
+	if !strings.HasPrefix(path, prefix) {
+		return false
+	}
+	if len(path) == len(prefix) {
+		return true
+	}
+	return path[len(prefix)] == '/'
 }
 
 // hasValidBillOrPrepaidBalance checks if a user has active bill quota or prepaid balance.

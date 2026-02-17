@@ -83,6 +83,10 @@ func RunServer(ctx context.Context, cfg config.AppConfig, defaultPort int) error
 	if errRefreshSettings := internalsettings.RefreshDBConfigSnapshot(ctx, conn); errRefreshSettings != nil {
 		return fmt.Errorf("refresh settings snapshot: %w", errRefreshSettings)
 	}
+	coreCfg, err := loadCoreConfig(configPath)
+	if err != nil {
+		return err
+	}
 
 	initialized, errInit := HasAdminInitialized(conn)
 	if errInit != nil {
@@ -100,10 +104,6 @@ func RunServer(ctx context.Context, cfg config.AppConfig, defaultPort int) error
 	authStore := store.NewGormAuthStore(conn)
 	sdkAuth.RegisterTokenStore(authStore)
 
-	coreCfg, err := loadCoreConfig(configPath)
-	if err != nil {
-		return err
-	}
 	// Respect config.yaml when commercial-mode is explicitly set.
 	// If the field is omitted, default to true (enterprise-safe defaults).
 	// Note: CLIProxyAPI uses commercial-mode to disable some high-overhead middleware
@@ -125,12 +125,6 @@ func RunServer(ctx context.Context, cfg config.AppConfig, defaultPort int) error
 		}
 		coreCfg.Port = defaultPort
 	}
-
-	// cpab 侧负责鉴权（DB API key），因此：
-	// - enforcementAccessMgr 用于我们注入的 Gin 中间件
-	// - serverAccessMgr 传给 CLIProxyAPIPlus runtime，并在 Build() 后清空，避免重复鉴权
-	enforcementAccessMgr := sdkaccess.NewManager()
-	enforcementAccessMgr.SetProviders(sdkaccess.RegisteredProviders())
 
 	serverAccessMgr := sdkaccess.NewManager()
 
@@ -167,7 +161,6 @@ func RunServer(ctx context.Context, cfg config.AppConfig, defaultPort int) error
 					c.Abort()
 				},
 				webUIRootMiddleware(webBundle.IndexHTML),
-				relayhttp.CLIProxyAuthMiddleware(enforcementAccessMgr, coreCfg.WebsocketAuth),
 				relayhttp.CLIProxyModelsMiddleware(conn, modelStore),
 			),
 			sdkapi.WithRouterConfigurator(func(engine *gin.Engine, baseHandler *sdkhandlers.BaseAPIHandler, cfg *sdkconfig.Config) {
@@ -285,7 +278,7 @@ func RunServer(ctx context.Context, cfg config.AppConfig, defaultPort int) error
 		modelSyncer.Start(ctx)
 	}
 
-	serverAccessMgr.SetProviders(nil)
+	// serverAccessMgr.SetProviders(nil)
 
 	log.Infof("starting relay with config=%s", cfg.ConfigPath)
 	return service.Run(ctx)
@@ -353,4 +346,14 @@ func isAPIRoute(requestPath string) bool {
 		}
 	}
 	return false
+}
+
+// buildAccessManager builds an access manager from SDK config providers.
+func buildAccessManager(cfg *sdkconfig.Config) (*sdkaccess.Manager, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("nil config")
+	}
+	manager := sdkaccess.NewManager()
+	manager.SetProviders(sdkaccess.RegisteredProviders())
+	return manager, nil
 }
