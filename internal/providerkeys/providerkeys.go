@@ -44,6 +44,9 @@ func ApplyToConfig(cfg *sdkconfig.Config, providerRows []models.ProviderAPIKey, 
 
 	for i := range providerRows {
 		row := &providerRows[i]
+		if !row.IsEnabled {
+			continue
+		}
 		switch normalizeProvider(row.Provider) {
 		case providerGemini:
 			entry := sdkconfig.GeminiKey{

@@ -74,6 +74,7 @@ type createProviderAPIKeyRequest struct {
 	Provider       string            `json:"provider"`        // Provider identifier.
 	Name           *string           `json:"name"`            // Optional provider name.
 	Priority       int               `json:"priority"`        // Selection priority (higher wins).
+	IsEnabled      *bool             `json:"is_enabled"`      // Optional enabled state.
 	APIKey         *string           `json:"api_key"`         // Optional API key.
 	Prefix         *string           `json:"prefix"`          // Optional prefix.
 	BaseURL        *string           `json:"base_url"`        // Optional base URL.
@@ -89,6 +90,7 @@ type updateProviderAPIKeyRequest struct {
 	Provider       *string            `json:"provider"`        // Optional provider.
 	Name           *string            `json:"name"`            // Optional provider name.
 	Priority       *int               `json:"priority"`        // Optional selection priority.
+	IsEnabled      *bool              `json:"is_enabled"`      // Optional enabled state.
 	APIKey         *string            `json:"api_key"`         // Optional API key.
 	Prefix         *string            `json:"prefix"`          // Optional prefix.
 	BaseURL        *string            `json:"base_url"`        // Optional base URL.
@@ -127,8 +129,14 @@ func (h *ProviderAPIKeyHandler) Create(c *gin.Context) {
 
 	now := time.Now().UTC()
 	row := models.ProviderAPIKey{
-		Provider:  provider,
-		Priority:  body.Priority,
+		Provider: provider,
+		Priority: body.Priority,
+		IsEnabled: func() bool {
+			if body.IsEnabled == nil {
+				return true
+			}
+			return *body.IsEnabled
+		}(),
 		Name:      strings.TrimSpace(derefString(body.Name)),
 		APIKey:    strings.TrimSpace(derefString(body.APIKey)),
 		Prefix:    strings.TrimSpace(derefString(body.Prefix)),
@@ -196,6 +204,7 @@ func (h *ProviderAPIKeyHandler) List(c *gin.Context) {
 		if errFind := h.db.WithContext(c.Request.Context()).
 			Model(&models.ProviderAPIKey{}).
 			Select("provider", "models", "excluded_models").
+			Where("is_enabled = ?", true).
 			Order("provider ASC, id ASC").
 			Find(&rows).Error; errFind != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "list api key providers failed"})
@@ -264,6 +273,7 @@ func (h *ProviderAPIKeyHandler) List(c *gin.Context) {
 	rawProvider := strings.TrimSpace(c.Query("provider"))
 	providerQ := normalizeProvider(rawProvider)
 	keywordQ := strings.TrimSpace(c.Query("keyword"))
+	statusQ := strings.ToLower(strings.TrimSpace(c.Query("status")))
 
 	if rawProvider != "" && providerQ == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid provider"})
@@ -281,6 +291,16 @@ func (h *ProviderAPIKeyHandler) List(c *gin.Context) {
 			pattern,
 			pattern,
 		)
+	}
+	switch statusQ {
+	case "", "all":
+	case "enabled":
+		q = q.Where("is_enabled = ?", true)
+	case "disabled":
+		q = q.Where("is_enabled = ?", false)
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status"})
+		return
 	}
 
 	var rows []models.ProviderAPIKey
@@ -342,6 +362,9 @@ func (h *ProviderAPIKeyHandler) Update(c *gin.Context) {
 	}
 	if body.Priority != nil {
 		row.Priority = *body.Priority
+	}
+	if body.IsEnabled != nil {
+		row.IsEnabled = *body.IsEnabled
 	}
 	if body.APIKey != nil {
 		row.APIKey = strings.TrimSpace(*body.APIKey)
@@ -476,6 +499,9 @@ func (h *ProviderAPIKeyHandler) syncSDKConfig(ctx context.Context) error {
 
 	for i := range rows {
 		row := &rows[i]
+		if !row.IsEnabled {
+			continue
+		}
 		switch normalizeProvider(row.Provider) {
 		case providerGemini:
 			entry := sdkconfig.GeminiKey{
@@ -793,6 +819,7 @@ func formatProviderRow(row *models.ProviderAPIKey) gin.H {
 		"id":              row.ID,
 		"provider":        row.Provider,
 		"name":            row.Name,
+		"is_enabled":      row.IsEnabled,
 		"priority":        row.Priority,
 		"api_key":         row.APIKey,
 		"prefix":          row.Prefix,

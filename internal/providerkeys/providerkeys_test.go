@@ -15,13 +15,14 @@ func TestApplyToConfig_Gemini(t *testing.T) {
 
 	rows := []models.ProviderAPIKey{
 		{
-			Provider: "gemini",
-			APIKey:   "key",
-			Prefix:   "teamA",
-			BaseURL:  "https://example.com",
-			ProxyURL: "socks5://proxy",
-			Headers:  datatypes.JSON(headers),
-			Models:   datatypes.JSON(modelsJSON),
+			Provider:  "gemini",
+			APIKey:    "key",
+			IsEnabled: true,
+			Prefix:    "teamA",
+			BaseURL:   "https://example.com",
+			ProxyURL:  "socks5://proxy",
+			Headers:   datatypes.JSON(headers),
+			Models:    datatypes.JSON(modelsJSON),
 		},
 	}
 
@@ -59,5 +60,30 @@ func TestApplyToConfig_OAuthModelAlias(t *testing.T) {
 	}
 	if mappings[0].Name != "claude-sonnet" || mappings[0].Alias != "sonnet" || !mappings[0].Fork {
 		t.Fatalf("unexpected mapping: %+v", mappings[0])
+	}
+}
+
+func TestApplyToConfig_SkipsDisabledProviderKeys(t *testing.T) {
+	rows := []models.ProviderAPIKey{
+		{
+			Provider:  "gemini",
+			APIKey:    "enabled-key",
+			IsEnabled: true,
+		},
+		{
+			Provider:  "gemini",
+			APIKey:    "disabled-key",
+			IsEnabled: false,
+		},
+	}
+
+	cfg := &sdkconfig.Config{}
+	ApplyToConfig(cfg, rows, nil)
+
+	if len(cfg.GeminiKey) != 1 {
+		t.Fatalf("expected 1 enabled gemini key, got %d", len(cfg.GeminiKey))
+	}
+	if cfg.GeminiKey[0].APIKey != "enabled-key" {
+		t.Fatalf("expected enabled key only, got %q", cfg.GeminiKey[0].APIKey)
 	}
 }
