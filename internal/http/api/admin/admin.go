@@ -110,6 +110,7 @@ func RegisterAdminRoutes(r *gin.Engine, db *gorm.DB, jwtCfg config.JWTConfig, co
 	authFileHandler := handlers.NewAuthFileHandler(db)
 	authed.POST("/auth-files", authFileHandler.Create)
 	authed.POST("/auth-files/import", authFileHandler.Import)
+	authed.POST("/auth-files/import-by-provider", authFileHandler.ImportByProvider)
 	authed.GET("/auth-files", authFileHandler.List)
 	authed.GET("/auth-files/:id", authFileHandler.Get)
 	authed.PUT("/auth-files/:id", authFileHandler.Update)

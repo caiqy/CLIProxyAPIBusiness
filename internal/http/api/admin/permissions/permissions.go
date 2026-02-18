@@ -153,6 +153,7 @@ var definitions = []Definition{
 
 	newDefinition("POST", "/v0/admin/auth-files", "Create Auth File", "Auth Files"),
 	newDefinition("POST", "/v0/admin/auth-files/import", "Import Auth Files", "Auth Files"),
+	newDefinition("POST", "/v0/admin/auth-files/import-by-provider", "Import Auth Files By Provider", "Auth Files"),
 	newDefinition("GET", "/v0/admin/auth-files", "List Auth Files", "Auth Files"),
 	newDefinition("GET", "/v0/admin/auth-files/:id", "Get Auth File", "Auth Files"),
 	newDefinition("PUT", "/v0/admin/auth-files/:id", "Update Auth File", "Auth Files"),
