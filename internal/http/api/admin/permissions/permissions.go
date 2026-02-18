@@ -258,6 +258,7 @@ var definitions = []Definition{
 	newDefinition("POST", "/v0/admin/tokens/codex", "Request Codex Token", "Auth Tokens"),
 	newDefinition("POST", "/v0/admin/tokens/antigravity", "Request Antigravity Token", "Auth Tokens"),
 	newDefinition("POST", "/v0/admin/tokens/qwen", "Request Qwen Token", "Auth Tokens"),
+	newDefinition("POST", "/v0/admin/tokens/kiro", "Request Kiro Token", "Auth Tokens"),
 	newDefinition("POST", "/v0/admin/tokens/iflow", "Request IFlow Token", "Auth Tokens"),
 	newDefinition("POST", "/v0/admin/tokens/iflow-cookie", "Request IFlow Cookie Token", "Auth Tokens"),
 	newDefinition("POST", "/v0/admin/tokens/get-auth-status", "Check Auth Status", "Auth Tokens"),

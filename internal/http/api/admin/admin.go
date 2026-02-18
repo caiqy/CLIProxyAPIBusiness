@@ -247,6 +247,7 @@ func RegisterAdminRoutes(r *gin.Engine, db *gorm.DB, jwtCfg config.JWTConfig, co
 		authed.POST("/tokens/codex", withOAuthCallbackDefaults(tokenRequester.RequestCodexToken))
 		authed.POST("/tokens/antigravity", withOAuthCallbackDefaults(tokenRequester.RequestAntigravityToken))
 		authed.POST("/tokens/qwen", tokenRequester.RequestQwenToken)
+		authed.POST("/tokens/kiro", withOAuthCallbackDefaults(tokenRequester.RequestKiroToken))
 		authed.POST("/tokens/iflow", withOAuthCallbackDefaults(tokenRequester.RequestIFlowToken))
 		authed.POST("/tokens/iflow-cookie", tokenRequester.RequestIFlowCookieToken)
 		authed.POST("/tokens/get-auth-status", tokenRequester.GetAuthStatus)
