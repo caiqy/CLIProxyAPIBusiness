@@ -71,6 +71,9 @@ func migratePostgres(conn *gorm.DB) error {
 	); errAutoMigrate != nil {
 		return fmt.Errorf("db: migrate: %w", errAutoMigrate)
 	}
+	if errTokenHealth := ensureAuthTokenHealthColumnsPostgres(conn); errTokenHealth != nil {
+		return errTokenHealth
+	}
 	if errUsageErrorStatus := conn.Exec(`
 		ALTER TABLE usages
 		ADD COLUMN IF NOT EXISTS error_status_code integer
@@ -878,6 +881,9 @@ func migrateSQLite(conn *gorm.DB) error {
 		return fmt.Errorf("db: migrate: %w", errAutoMigrate)
 	}
 	migrator := conn.Migrator()
+	if errTokenHealth := ensureAuthTokenHealthColumnsSQLite(conn, migrator); errTokenHealth != nil {
+		return errTokenHealth
+	}
 	if migrator != nil && migrator.HasTable(&models.ModelReference{}) && !migrator.HasColumn(&models.ModelReference{}, "model_id") {
 		if errModelIDAdd := conn.Exec(`
 			ALTER TABLE models
@@ -1637,6 +1643,68 @@ func migrateUserGroupIDsSQLite(conn *gorm.DB) error {
 		WHERE user_group_id IS NULL
 	`).Error; errUpdate != nil {
 		return fmt.Errorf("db: backfill bill user group ids: %w", errUpdate)
+	}
+	return nil
+}
+
+func ensureAuthTokenHealthColumnsPostgres(conn *gorm.DB) error {
+	if conn == nil {
+		return fmt.Errorf("db: ensure auth token health columns: nil connection")
+	}
+	if errAddInvalid := conn.Exec(`
+		ALTER TABLE auths
+		ADD COLUMN IF NOT EXISTS token_invalid boolean NOT NULL DEFAULT false
+	`).Error; errAddInvalid != nil {
+		return fmt.Errorf("db: add auth token_invalid: %w", errAddInvalid)
+	}
+	if errAddCheckAt := conn.Exec(`
+		ALTER TABLE auths
+		ADD COLUMN IF NOT EXISTS last_auth_check_at timestamptz
+	`).Error; errAddCheckAt != nil {
+		return fmt.Errorf("db: add auth last_auth_check_at: %w", errAddCheckAt)
+	}
+	if errAddError := conn.Exec(`
+		ALTER TABLE auths
+		ADD COLUMN IF NOT EXISTS last_auth_error text
+	`).Error; errAddError != nil {
+		return fmt.Errorf("db: add auth last_auth_error: %w", errAddError)
+	}
+	return nil
+}
+
+func ensureAuthTokenHealthColumnsSQLite(conn *gorm.DB, migrator gorm.Migrator) error {
+	if conn == nil {
+		return fmt.Errorf("db: ensure auth token health columns: nil connection")
+	}
+	if migrator == nil {
+		migrator = conn.Migrator()
+	}
+	if migrator == nil {
+		return fmt.Errorf("db: ensure auth token health columns: nil migrator")
+	}
+	if !migrator.HasColumn(&models.Auth{}, "token_invalid") {
+		if errAddInvalid := conn.Exec(`
+			ALTER TABLE auths
+			ADD COLUMN token_invalid boolean NOT NULL DEFAULT false
+		`).Error; errAddInvalid != nil {
+			return fmt.Errorf("db: add auth token_invalid: %w", errAddInvalid)
+		}
+	}
+	if !migrator.HasColumn(&models.Auth{}, "last_auth_check_at") {
+		if errAddCheckAt := conn.Exec(`
+			ALTER TABLE auths
+			ADD COLUMN last_auth_check_at datetime
+		`).Error; errAddCheckAt != nil {
+			return fmt.Errorf("db: add auth last_auth_check_at: %w", errAddCheckAt)
+		}
+	}
+	if !migrator.HasColumn(&models.Auth{}, "last_auth_error") {
+		if errAddError := conn.Exec(`
+			ALTER TABLE auths
+			ADD COLUMN last_auth_error text
+		`).Error; errAddError != nil {
+			return fmt.Errorf("db: add auth last_auth_error: %w", errAddError)
+		}
 	}
 	return nil
 }

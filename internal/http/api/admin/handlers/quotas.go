@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -40,12 +41,16 @@ type quotaListQuery struct {
 
 // quotaListRow defines the query result row for quota list.
 type quotaListRow struct {
-	ID        uint64         `gorm:"column:id"`
-	AuthID    uint64         `gorm:"column:auth_id"`
-	Type      string         `gorm:"column:type"`
-	Data      datatypes.JSON `gorm:"column:data"`
-	UpdatedAt time.Time      `gorm:"column:updated_at"`
-	AuthKey   string         `gorm:"column:auth_key"`
+	ID              uint64         `gorm:"column:id"`
+	AuthID          uint64         `gorm:"column:auth_id"`
+	Type            string         `gorm:"column:type"`
+	Data            datatypes.JSON `gorm:"column:data"`
+	UpdatedAt       time.Time      `gorm:"column:updated_at"`
+	AuthKey         string         `gorm:"column:auth_key"`
+	IsAvailable     bool           `gorm:"column:is_available"`
+	TokenInvalid    bool           `gorm:"column:token_invalid"`
+	LastAuthCheckAt sql.NullString `gorm:"column:last_auth_check_at"`
+	LastAuthError   string         `gorm:"column:last_auth_error"`
 }
 
 // List returns quota records with paging and filters.
@@ -116,7 +121,7 @@ func (h *QuotaHandler) List(c *gin.Context) {
 	offset := (q.Page - 1) * q.Limit
 	var rows []quotaListRow
 	if errFind := base.
-		Select("quota.id, quota.auth_id, quota.type, quota.data, quota.updated_at, auths.key AS auth_key").
+		Select("quota.id, quota.auth_id, quota.type, quota.data, quota.updated_at, auths.key AS auth_key, auths.is_available AS is_available, auths.token_invalid AS token_invalid, CAST(auths.last_auth_check_at AS TEXT) AS last_auth_check_at, auths.last_auth_error AS last_auth_error").
 		Order("auths.id ASC, quota.updated_at DESC").
 		Offset(offset).
 		Limit(q.Limit).
@@ -131,13 +136,18 @@ func (h *QuotaHandler) List(c *gin.Context) {
 		if isAntigravityType(row.Type) {
 			payload = normalizeAntigravityQuota(row.Data)
 		}
+		lastAuthCheckAt := parseQuotaListAuthCheckTime(row.LastAuthCheckAt)
 		out = append(out, gin.H{
-			"id":         row.ID,
-			"auth_id":    row.AuthID,
-			"auth_key":   row.AuthKey,
-			"type":       row.Type,
-			"data":       payload,
-			"updated_at": row.UpdatedAt,
+			"id":                 row.ID,
+			"auth_id":            row.AuthID,
+			"auth_key":           row.AuthKey,
+			"type":               row.Type,
+			"data":               payload,
+			"updated_at":         row.UpdatedAt,
+			"is_available":       row.IsAvailable,
+			"token_invalid":      row.TokenInvalid,
+			"last_auth_check_at": lastAuthCheckAt,
+			"last_auth_error":    row.LastAuthError,
 		})
 	}
 
@@ -148,6 +158,32 @@ func (h *QuotaHandler) List(c *gin.Context) {
 		"page":   q.Page,
 		"limit":  q.Limit,
 	})
+}
+
+func parseQuotaListAuthCheckTime(value sql.NullString) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	text := strings.TrimSpace(value.String)
+	if text == "" {
+		return nil
+	}
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05-07:00",
+		"2006-01-02 15:04:05.999999999-07",
+		"2006-01-02 15:04:05-07",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05",
+	}
+	for _, layout := range layouts {
+		if parsed, errParse := time.Parse(layout, text); errParse == nil {
+			return &parsed
+		}
+	}
+	return nil
 }
 
 func isAntigravityType(value string) bool {

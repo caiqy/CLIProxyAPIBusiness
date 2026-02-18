@@ -4,12 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/glebarez/sqlite"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/models"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -22,10 +26,66 @@ func setupPollerManualRefreshDB(t *testing.T) *gorm.DB {
 	if errOpen != nil {
 		t.Fatalf("open db: %v", errOpen)
 	}
-	if errMigrate := db.AutoMigrate(&models.Auth{}); errMigrate != nil {
+	if errMigrate := db.AutoMigrate(&models.Auth{}, &models.Quota{}); errMigrate != nil {
 		t.Fatalf("migrate db: %v", errMigrate)
 	}
 	return db
+}
+
+type sequenceProviderExecutor struct {
+	mu       sync.Mutex
+	statuses []int
+	bodies   []string
+	index    int
+}
+
+type authHealthSnapshot struct {
+	TokenInvalid    bool
+	LastAuthCheckAt string
+	LastAuthError   string
+}
+
+func (s *sequenceProviderExecutor) Identifier() string {
+	return "codex"
+}
+
+func (s *sequenceProviderExecutor) Execute(context.Context, *coreauth.Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	return cliproxyexecutor.Response{}, errors.New("not implemented")
+}
+
+func (s *sequenceProviderExecutor) ExecuteStream(context.Context, *coreauth.Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (<-chan cliproxyexecutor.StreamChunk, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (s *sequenceProviderExecutor) Refresh(context.Context, *coreauth.Auth) (*coreauth.Auth, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (s *sequenceProviderExecutor) CountTokens(context.Context, *coreauth.Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+	return cliproxyexecutor.Response{}, errors.New("not implemented")
+}
+
+func (s *sequenceProviderExecutor) PrepareRequest(_ *http.Request, _ *coreauth.Auth) error {
+	return nil
+}
+
+func (s *sequenceProviderExecutor) HttpRequest(_ context.Context, _ *coreauth.Auth, _ *http.Request) (*http.Response, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	status := http.StatusOK
+	body := `{"ok":true}`
+	if s.index < len(s.statuses) {
+		status = s.statuses[s.index]
+	}
+	if s.index < len(s.bodies) {
+		body = s.bodies[s.index]
+	}
+	s.index++
+	return &http.Response{
+		StatusCode: status,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     make(http.Header),
+	}, nil
 }
 
 func TestRefreshAuthReturnsUnsupportedProvider(t *testing.T) {
@@ -107,5 +167,151 @@ func TestLoadAuthRowByKeyReturnsNotFound(t *testing.T) {
 	}
 	if ok {
 		t.Fatalf("expected missing key to return ok=false")
+	}
+}
+
+func TestRefreshAuthMarksTokenInvalidOnUnauthorizedStatus(t *testing.T) {
+	db := setupPollerManualRefreshDB(t)
+	manager := coreauth.NewManager(nil, nil, nil)
+	executor := &sequenceProviderExecutor{statuses: []int{http.StatusUnauthorized}}
+	manager.RegisterExecutor(executor)
+
+	authRecord := &coreauth.Auth{
+		ID:       "auth-unauthorized",
+		Provider: "codex",
+		Metadata: map[string]any{"account_id": "acct-test"},
+	}
+	auth, errRegister := manager.Register(context.Background(), authRecord)
+	if errRegister != nil {
+		t.Fatalf("register auth: %v", errRegister)
+	}
+
+	row := models.Auth{Key: auth.ID, Content: datatypes.JSON([]byte(`{"type":"codex"}`))}
+	if errCreate := db.Create(&row).Error; errCreate != nil {
+		t.Fatalf("create auth row: %v", errCreate)
+	}
+
+	poller := &Poller{db: db, manager: manager}
+	errRefresh := poller.refreshAuth(context.Background(), auth, authRowInfo{ID: row.ID, Type: "codex"})
+	if errRefresh == nil {
+		t.Fatalf("expected refresh error on 401 response")
+	}
+
+	var updated authHealthSnapshot
+	if errLoad := db.Table("auths").
+		Select("token_invalid", "last_auth_check_at", "last_auth_error").
+		Where("id = ?", row.ID).
+		Take(&updated).Error; errLoad != nil {
+		t.Fatalf("load updated auth row: %v", errLoad)
+	}
+	if !updated.TokenInvalid {
+		t.Fatalf("expected token_invalid=true after 401")
+	}
+	if strings.TrimSpace(updated.LastAuthCheckAt) == "" {
+		t.Fatalf("expected last_auth_check_at to be set")
+	}
+	if strings.TrimSpace(updated.LastAuthError) == "" {
+		t.Fatalf("expected last_auth_error to be set")
+	}
+}
+
+func TestRefreshAuthClearsTokenInvalidAfterSuccessfulRefresh(t *testing.T) {
+	db := setupPollerManualRefreshDB(t)
+	manager := coreauth.NewManager(nil, nil, nil)
+	executor := &sequenceProviderExecutor{
+		statuses: []int{http.StatusForbidden, http.StatusOK},
+		bodies:   []string{`{"error":"forbidden"}`, `{"ok":true}`},
+	}
+	manager.RegisterExecutor(executor)
+
+	authRecord := &coreauth.Auth{
+		ID:       "auth-recovery",
+		Provider: "codex",
+		Metadata: map[string]any{"account_id": "acct-test"},
+	}
+	auth, errRegister := manager.Register(context.Background(), authRecord)
+	if errRegister != nil {
+		t.Fatalf("register auth: %v", errRegister)
+	}
+
+	row := models.Auth{Key: auth.ID, Content: datatypes.JSON([]byte(`{"type":"codex"}`))}
+	if errCreate := db.Create(&row).Error; errCreate != nil {
+		t.Fatalf("create auth row: %v", errCreate)
+	}
+
+	poller := &Poller{db: db, manager: manager}
+	errFirst := poller.refreshAuth(context.Background(), auth, authRowInfo{ID: row.ID, Type: "codex"})
+	if errFirst == nil {
+		t.Fatalf("expected first refresh to fail on 403")
+	}
+	errSecond := poller.refreshAuth(context.Background(), auth, authRowInfo{ID: row.ID, Type: "codex"})
+	if errSecond != nil {
+		t.Fatalf("expected second refresh to succeed, got %v", errSecond)
+	}
+
+	var updated authHealthSnapshot
+	if errLoad := db.Table("auths").
+		Select("token_invalid", "last_auth_check_at", "last_auth_error").
+		Where("id = ?", row.ID).
+		Take(&updated).Error; errLoad != nil {
+		t.Fatalf("load updated auth row: %v", errLoad)
+	}
+	if updated.TokenInvalid {
+		t.Fatalf("expected token_invalid=false after successful refresh")
+	}
+	if strings.TrimSpace(updated.LastAuthError) != "" {
+		t.Fatalf("expected last_auth_error to be cleared, got %q", updated.LastAuthError)
+	}
+	if strings.TrimSpace(updated.LastAuthCheckAt) == "" {
+		t.Fatalf("expected last_auth_check_at to stay set")
+	}
+}
+
+func TestRefreshAuthKeepsTokenInvalidOnNonAuthFailureAfterInvalid(t *testing.T) {
+	db := setupPollerManualRefreshDB(t)
+	manager := coreauth.NewManager(nil, nil, nil)
+	executor := &sequenceProviderExecutor{
+		statuses: []int{http.StatusUnauthorized, http.StatusInternalServerError},
+		bodies:   []string{`{"error":"unauthorized"}`, `{"error":"server error"}`},
+	}
+	manager.RegisterExecutor(executor)
+
+	authRecord := &coreauth.Auth{
+		ID:       "auth-keep-invalid",
+		Provider: "codex",
+		Metadata: map[string]any{"account_id": "acct-test"},
+	}
+	auth, errRegister := manager.Register(context.Background(), authRecord)
+	if errRegister != nil {
+		t.Fatalf("register auth: %v", errRegister)
+	}
+
+	row := models.Auth{Key: auth.ID, Content: datatypes.JSON([]byte(`{"type":"codex"}`))}
+	if errCreate := db.Create(&row).Error; errCreate != nil {
+		t.Fatalf("create auth row: %v", errCreate)
+	}
+
+	poller := &Poller{db: db, manager: manager}
+	errFirst := poller.refreshAuth(context.Background(), auth, authRowInfo{ID: row.ID, Type: "codex"})
+	if errFirst == nil {
+		t.Fatalf("expected first refresh to fail on 401")
+	}
+	errSecond := poller.refreshAuth(context.Background(), auth, authRowInfo{ID: row.ID, Type: "codex"})
+	if errSecond == nil {
+		t.Fatalf("expected second refresh to fail on 500")
+	}
+
+	var updated authHealthSnapshot
+	if errLoad := db.Table("auths").
+		Select("token_invalid", "last_auth_check_at", "last_auth_error").
+		Where("id = ?", row.ID).
+		Take(&updated).Error; errLoad != nil {
+		t.Fatalf("load updated auth row: %v", errLoad)
+	}
+	if !updated.TokenInvalid {
+		t.Fatalf("expected token_invalid=true to be preserved after 500")
+	}
+	if strings.TrimSpace(updated.LastAuthError) == "" {
+		t.Fatalf("expected last_auth_error to be set on 500")
 	}
 }

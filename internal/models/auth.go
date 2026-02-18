@@ -168,9 +168,12 @@ type Auth struct {
 
 	Content datatypes.JSON `gorm:"type:jsonb;not null"` // Auth payload content.
 
-	IsAvailable bool `gorm:"type:boolean;not null;default:true"` // Availability flag.
-	RateLimit   int  `gorm:"not null;default:0"`                 // Rate limit per second.
-	Priority    int  `gorm:"not null;default:0;index"`           // Selection priority (higher wins).
+	IsAvailable     bool       `gorm:"type:boolean;not null;default:true"`  // Availability flag.
+	RateLimit       int        `gorm:"not null;default:0"`                  // Rate limit per second.
+	Priority        int        `gorm:"not null;default:0;index"`            // Selection priority (higher wins).
+	TokenInvalid    bool       `gorm:"type:boolean;not null;default:false"` // Token health flag from latest auth check.
+	LastAuthCheckAt *time.Time `gorm:"type:timestamptz"`                    // Latest auth health check time.
+	LastAuthError   string     `gorm:"type:text"`                           // Latest auth health check error detail.
 
 	CreatedAt time.Time `gorm:"not null;autoCreateTime"` // Creation timestamp.
 	UpdatedAt time.Time `gorm:"not null;autoUpdateTime"` // Last update timestamp.

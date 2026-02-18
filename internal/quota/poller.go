@@ -48,6 +48,46 @@ var (
 	ErrUnsupportedProvider = errors.New("quota poller: unsupported provider")
 )
 
+type providerRequestError struct {
+	provider   string
+	statusCode int
+	err        error
+}
+
+func (e *providerRequestError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.err != nil {
+		return e.err.Error()
+	}
+	if e.statusCode > 0 {
+		return fmt.Sprintf("quota poller: %s status=%d", e.provider, e.statusCode)
+	}
+	return "quota poller: provider request failed"
+}
+
+func (e *providerRequestError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
+func (e *providerRequestError) StatusCode() int {
+	if e == nil {
+		return 0
+	}
+	return e.statusCode
+}
+
+func (e *providerRequestError) Provider() string {
+	if e == nil {
+		return ""
+	}
+	return e.provider
+}
+
 type authRowInfo struct {
 	ID          uint64
 	Type        string
@@ -206,16 +246,28 @@ func (p *Poller) refreshAuth(ctx context.Context, auth *coreauth.Auth, row authR
 		provider = strings.ToLower(strings.TrimSpace(row.Type))
 	}
 
+	var errRefresh error
 	switch provider {
 	case "antigravity":
-		return p.pollAntigravity(ctx, auth, row)
+		errRefresh = p.pollAntigravity(ctx, auth, row)
 	case "codex":
-		return p.pollCodex(ctx, auth, row)
+		errRefresh = p.pollCodex(ctx, auth, row)
 	case "gemini-cli":
-		return p.pollGeminiCLI(ctx, auth, row)
+		errRefresh = p.pollGeminiCLI(ctx, auth, row)
 	default:
 		return ErrUnsupportedProvider
 	}
+
+	if row.ID != 0 {
+		if errHealth := p.updateAuthHealth(ctx, row.ID, errRefresh); errHealth != nil {
+			log.WithError(errHealth).Warnf("quota poller: update auth health failed (auth=%s)", auth.ID)
+			if errRefresh == nil {
+				return errHealth
+			}
+		}
+	}
+
+	return errRefresh
 }
 
 func (p *Poller) RefreshByAuthKey(ctx context.Context, authKey string) error {
@@ -355,7 +407,11 @@ func (p *Poller) pollAntigravity(ctx context.Context, auth *coreauth.Auth, row a
 		}
 		if status < http.StatusOK || status >= http.StatusMultipleChoices {
 			log.Warnf("quota poller: antigravity status=%d (auth=%s body=%s)", status, auth.ID, summarizePayload(payload))
-			lastErr = fmt.Errorf("quota poller: antigravity non-2xx status=%d", status)
+			lastErr = &providerRequestError{
+				provider:   "antigravity",
+				statusCode: status,
+				err:        fmt.Errorf("quota poller: antigravity non-2xx status=%d", status),
+			}
 			continue
 		}
 		if errSave := p.saveQuota(ctx, row.ID, row.Type, payload); errSave != nil {
@@ -390,7 +446,11 @@ func (p *Poller) pollCodex(ctx context.Context, auth *coreauth.Auth, row authRow
 	}
 	if status < http.StatusOK || status >= http.StatusMultipleChoices {
 		log.Warnf("quota poller: codex status=%d (auth=%s body=%s)", status, auth.ID, summarizePayload(payload))
-		return fmt.Errorf("quota poller: codex non-2xx status=%d", status)
+		return &providerRequestError{
+			provider:   "codex",
+			statusCode: status,
+			err:        fmt.Errorf("quota poller: codex non-2xx status=%d", status),
+		}
 	}
 	if errSave := p.saveQuota(ctx, row.ID, row.Type, payload); errSave != nil {
 		log.WithError(errSave).Warnf("quota poller: codex save failed (auth=%s)", auth.ID)
@@ -422,7 +482,11 @@ func (p *Poller) pollGeminiCLI(ctx context.Context, auth *coreauth.Auth, row aut
 	}
 	if status < http.StatusOK || status >= http.StatusMultipleChoices {
 		log.Warnf("quota poller: gemini-cli status=%d (auth=%s body=%s)", status, auth.ID, summarizePayload(payload))
-		return fmt.Errorf("quota poller: gemini-cli non-2xx status=%d", status)
+		return &providerRequestError{
+			provider:   "gemini-cli",
+			statusCode: status,
+			err:        fmt.Errorf("quota poller: gemini-cli non-2xx status=%d", status),
+		}
 	}
 	if errSave := p.saveQuota(ctx, row.ID, row.Type, payload); errSave != nil {
 		log.WithError(errSave).Warnf("quota poller: gemini-cli save failed (auth=%s)", auth.ID)
@@ -759,4 +823,52 @@ func summarizePayload(payload []byte) string {
 		return string(trimmed[:maxErrorBodyBytes]) + "...(truncated)"
 	}
 	return string(trimmed)
+}
+
+func (p *Poller) updateAuthHealth(ctx context.Context, authID uint64, errRefresh error) error {
+	if p == nil || p.db == nil {
+		return errors.New("quota poller: db not initialized")
+	}
+	if authID == 0 {
+		return errors.New("quota poller: auth id is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	now := time.Now().UTC()
+	updates := map[string]any{
+		"last_auth_check_at": now,
+	}
+	if errRefresh == nil {
+		updates["token_invalid"] = false
+		updates["last_auth_error"] = ""
+	} else {
+		updates["last_auth_error"] = errRefresh.Error()
+		if statusCode, ok := refreshStatusCode(errRefresh); ok {
+			if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden {
+				updates["token_invalid"] = true
+			}
+		}
+	}
+
+	return p.db.WithContext(ctx).
+		Model(&models.Auth{}).
+		Where("id = ?", authID).
+		Updates(updates).Error
+}
+
+func refreshStatusCode(err error) (int, bool) {
+	if err == nil {
+		return 0, false
+	}
+	var statusErr interface{ StatusCode() int }
+	if !errors.As(err, &statusErr) {
+		return 0, false
+	}
+	statusCode := statusErr.StatusCode()
+	if statusCode <= 0 {
+		return 0, false
+	}
+	return statusCode, true
 }

@@ -119,7 +119,8 @@ func (h *QuotaHandler) listManualRefreshAuthKeys(ctx context.Context, req quotaM
 
 	query := h.db.WithContext(ctx).
 		Table("quota").
-		Joins("JOIN auths ON auths.id = quota.auth_id")
+		Joins("JOIN auths ON auths.id = quota.auth_id").
+		Where("auths.is_available")
 	if key != "" {
 		pattern := dbutil.NormalizeLikePattern(h.db, "%"+key+"%")
 		query = query.Where(dbutil.CaseInsensitiveLikeExpr(h.db, "auths.key"), pattern)

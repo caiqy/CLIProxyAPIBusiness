@@ -37,6 +37,8 @@ const (
 	defaultQueryTimeout = 10 * time.Second
 	// defaultDispatchBuffer defines the pending update buffer size.
 	defaultDispatchBuffer = 2048
+	// sysTokenInvalidMetadataKey marks auth token health in runtime metadata.
+	sysTokenInvalidMetadataKey = "_sys_token_invalid"
 )
 
 // authState caches an auth hash and its last update time.
@@ -533,7 +535,7 @@ func (w *dbWatcher) pollAuth(ctx context.Context, force bool) {
 
 	var rows []models.Auth
 	if errFind := w.db.WithContext(qctx).
-		Select("key", "content", "priority", "created_at", "updated_at").
+		Select("key", "content", "priority", "token_invalid", "created_at", "updated_at").
 		Where("is_available = ?", true).
 		Order("id ASC").
 		Find(&rows).Error; errFind != nil {
@@ -556,7 +558,7 @@ func (w *dbWatcher) pollAuth(ctx context.Context, force bool) {
 		hash := hashBytes(row.Content)
 		nextStates[key] = authState{hash: hash, updatedAt: row.UpdatedAt}
 
-		a := synthesizeAuthFromDBRow(w.authDir, key, row.Content, row.Priority, row.CreatedAt, row.UpdatedAt)
+		a := synthesizeAuthFromDBRow(w.authDir, key, row.Content, row.Priority, row.TokenInvalid, row.CreatedAt, row.UpdatedAt)
 		if a == nil || a.ID == "" {
 			continue
 		}
@@ -1170,11 +1172,15 @@ func encodeUpdate(enc *updateEncoder, update authUpdate) (reflect.Value, bool) {
 }
 
 // synthesizeAuthFromDBRow builds an auth entry from the stored JSON payload.
-func synthesizeAuthFromDBRow(authDir string, key string, payload []byte, priority int, createdAt, updatedAt time.Time) *coreauth.Auth {
+func synthesizeAuthFromDBRow(authDir string, key string, payload []byte, priority int, tokenInvalid bool, createdAt, updatedAt time.Time) *coreauth.Auth {
 	var metadata map[string]any
 	if errUnmarshal := json.Unmarshal(payload, &metadata); errUnmarshal != nil {
 		return nil
 	}
+	if metadata == nil {
+		metadata = make(map[string]any)
+	}
+	metadata[sysTokenInvalidMetadataKey] = tokenInvalid
 	t, _ := metadata["type"].(string)
 	if strings.TrimSpace(t) == "" {
 		return nil

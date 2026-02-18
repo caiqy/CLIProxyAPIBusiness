@@ -30,6 +30,7 @@ const (
 	modelMappingSelectorRoundRobin = 0
 	modelMappingSelectorFillFirst  = 1
 	modelMappingSelectorStick      = 2
+	tokenInvalidMetadataKey        = "_sys_token_invalid"
 )
 
 // Selector chooses an auth candidate per model mapping selector rules.
@@ -844,6 +845,9 @@ func isAuthBlockedForModel(auth *coreauth.Auth, model string, now time.Time) (bo
 	if auth == nil {
 		return true, blockReasonOther, time.Time{}
 	}
+	if isTokenInvalidAuth(auth) {
+		return true, blockReasonOther, time.Time{}
+	}
 	if auth.Disabled || auth.Status == coreauth.StatusDisabled {
 		return true, blockReasonDisabled, time.Time{}
 	}
@@ -890,4 +894,47 @@ func isAuthBlockedForModel(auth *coreauth.Auth, model string, now time.Time) (bo
 		return true, blockReasonOther, next
 	}
 	return false, blockReasonNone, time.Time{}
+}
+
+func isTokenInvalidAuth(auth *coreauth.Auth) bool {
+	if auth == nil || auth.Metadata == nil {
+		return false
+	}
+	raw, ok := auth.Metadata[tokenInvalidMetadataKey]
+	if !ok {
+		return false
+	}
+	switch v := raw.(type) {
+	case bool:
+		return v
+	case string:
+		parsed, errParse := strconv.ParseBool(strings.TrimSpace(v))
+		return errParse == nil && parsed
+	case float64:
+		return v != 0
+	case float32:
+		return v != 0
+	case int:
+		return v != 0
+	case int8:
+		return v != 0
+	case int16:
+		return v != 0
+	case int32:
+		return v != 0
+	case int64:
+		return v != 0
+	case uint:
+		return v != 0
+	case uint8:
+		return v != 0
+	case uint16:
+		return v != 0
+	case uint32:
+		return v != 0
+	case uint64:
+		return v != 0
+	default:
+		return false
+	}
 }

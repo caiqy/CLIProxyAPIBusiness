@@ -340,3 +340,88 @@ func TestQuotaManualRefreshPanicCountsAsFailed(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestManualRefreshSkipsDisabledAuths(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupQuotaManualRefreshDB(t)
+
+	enabledAuth := models.Auth{
+		Key:         "auth-enabled",
+		IsAvailable: true,
+		Content:     datatypes.JSON([]byte(`{"type":"antigravity"}`)),
+	}
+	if errCreate := db.Create(&enabledAuth).Error; errCreate != nil {
+		t.Fatalf("create enabled auth: %v", errCreate)
+	}
+	disabledAuth := models.Auth{
+		Key:     "auth-disabled",
+		Content: datatypes.JSON([]byte(`{"type":"codex"}`)),
+	}
+	if errCreate := db.Create(&disabledAuth).Error; errCreate != nil {
+		t.Fatalf("create disabled auth: %v", errCreate)
+	}
+	if errUpdate := db.Model(&models.Auth{}).Where("key = ?", "auth-disabled").Update("is_available", false).Error; errUpdate != nil {
+		t.Fatalf("set auth-disabled unavailable: %v", errUpdate)
+	}
+
+	quotaRows := []models.Quota{
+		{AuthID: enabledAuth.ID, Type: "antigravity", Data: datatypes.JSON([]byte(`{"ok":true}`))},
+		{AuthID: disabledAuth.ID, Type: "codex", Data: datatypes.JSON([]byte(`{"ok":true}`))},
+	}
+	if errCreate := db.Create(&quotaRows).Error; errCreate != nil {
+		t.Fatalf("create quota rows: %v", errCreate)
+	}
+
+	refresher := &manualRefreshTestRefresher{}
+	handler := NewQuotaHandler(db, refresher, NewQuotaManualRefreshTaskStore(time.Minute, 100))
+	keys, _, errList := handler.listManualRefreshAuthKeys(context.Background(), quotaManualRefreshCreateRequest{})
+	if errList != nil {
+		t.Fatalf("list manual refresh auth keys: %v", errList)
+	}
+	if len(keys) != 1 || keys[0] != "auth-enabled" {
+		t.Fatalf("expected handler key list to include only auth-enabled, got %#v", keys)
+	}
+
+	router := gin.New()
+	router.POST("/v0/admin/quotas/manual-refresh", handler.CreateManualRefresh)
+	router.GET("/v0/admin/quotas/manual-refresh/:task_id", handler.GetManualRefresh)
+
+	postReq := httptest.NewRequest(http.MethodPost, "/v0/admin/quotas/manual-refresh", bytes.NewBufferString(`{}`))
+	postReq.Header.Set("Content-Type", "application/json")
+	postW := httptest.NewRecorder()
+	router.ServeHTTP(postW, postReq)
+	if postW.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", postW.Code)
+	}
+
+	var created quotaManualRefreshCreateResponse
+	if errDecode := json.Unmarshal(postW.Body.Bytes(), &created); errDecode != nil {
+		t.Fatalf("decode create response: %v", errDecode)
+	}
+	if created.Total != 1 {
+		t.Fatalf("expected total=1 for enabled auth only, got %d", created.Total)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		getReq := httptest.NewRequest(http.MethodGet, "/v0/admin/quotas/manual-refresh/"+created.TaskID, nil)
+		getW := httptest.NewRecorder()
+		router.ServeHTTP(getW, getReq)
+
+		var status quotaManualRefreshStatusResponse
+		if errDecode := json.Unmarshal(getW.Body.Bytes(), &status); errDecode != nil {
+			t.Fatalf("decode status response: %v", errDecode)
+		}
+		if status.Status == quotaManualRefreshTaskStatusSuccess {
+			calls := refresher.callsSnapshot()
+			if len(calls) != 1 || calls[0] != "auth-enabled" {
+				t.Fatalf("expected only enabled auth to be refreshed, calls=%#v", calls)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting task completion")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
