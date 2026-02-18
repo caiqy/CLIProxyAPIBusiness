@@ -24,6 +24,7 @@
 3. 新增后端专用接口：`POST /v0/admin/auth-files/import-by-provider`。
 4. 按 provider 做强校验，返回逐条失败原因。
 5. 校验与入库遵循“仅取用和验证需要字段”。
+6. `key` 与 `type` 由系统自动生成，不要求用户提供。
 
 ### 非目标
 
@@ -80,7 +81,7 @@
   "source": "text",
   "auth_group_id": [1, 2],
   "entries": [
-    { "key": "codex-main", "token": "xxx", "base_url": "https://..." }
+    { "access_token": "xxx", "base_url": "https://..." }
   ]
 }
 ```
@@ -108,12 +109,34 @@
 
 遵循你确认的原则：**仅取用和验证需要字段**。
 
+### `key` / `type` 自动生成
+
+- `type`：按 provider 自动写入 canonical 值（如 `anthropic -> claude`、`gemini-cli -> gemini`、`iflow-cookie -> iflow`）。
+- `key`：优先使用 `provider + email`（email 规范化为 trim + lowercase）。
+- 若 email 缺失：回退 `provider + 核心凭据哈希`（稳定幂等，不阻断导入）。
+- 用户输入中的 `key`、`type` 不参与入库。
+
 ### 校验分层
 
 1. 基础层：`provider/source/entries` 必填与类型。
 2. 结构层：`entries` 必须是对象数组。
 3. Provider 层：仅验证该 provider 所需字段（必填、类型、枚举/格式）。
-4. 业务层：`key` 规则、auth group 合法性、冲突更新策略。
+4. 业务层：自动 key 生成、auth group 合法性、冲突更新策略。
+
+### Provider 最小必需字段（按真实执行代码对齐）
+
+- `codex`：`access_token` 必填（`refresh_token` 为刷新增强字段）。
+- `anthropic/claude`：`access_token` 必填（`refresh_token` 为刷新增强字段）。
+- `qwen`：`access_token` 必填（`refresh_token` 为刷新增强字段）。
+- `antigravity`：`access_token` 必填（`refresh_token` 为刷新增强字段）。
+- `kiro`：`access_token` 必填（`refresh_token` 为刷新增强字段；社交/IDC 附加字段可选）。
+- `gemini`：`access_token` 或 `token.access_token` 二选一。
+- `iflow`：三模式命中其一即通过：
+  - A：`api_key`；
+  - B：`cookie + email`；
+  - C：`refresh_token`（`access_token` 可选）。
+
+说明：`email` 全局可选，仅在展示归因与 iFlow-cookie 模式下具有功能性要求。
 
 ### 非必要字段处理
 
@@ -127,6 +150,7 @@
 
 - 示例来源：前端内置模板。
 - 每个 provider 一份“真实可用”最小示例。
+- 示例不包含 `key`、`type`（由后端自动生成）。
 - 示例支持：
   - 复制
   - 一键填充到“文本导入”Tab
@@ -191,3 +215,4 @@
 3. 每个 provider 可查看真实示例并可一键填充。
 4. 导入按 provider 做强校验并返回逐条错误。
 5. 非必要字段不阻断导入，且不会污染入库结构。
+6. 用户无需提供 `key`、`type`，系统可自动生成并稳定幂等更新。
