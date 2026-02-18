@@ -1,10 +1,13 @@
 package handlers
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -35,7 +38,7 @@ type importAuthFilesByProviderResponse struct {
 
 type providerImportRule struct {
 	allowedFields []string
-	requireAny    []string
+	validate      func(map[string]any) error
 }
 
 var providerAliasToCanonical = map[string]string{
@@ -86,31 +89,31 @@ var commonImportAllowedFields = []string{
 var providerImportRules = map[string]providerImportRule{
 	"codex": {
 		allowedFields: commonImportAllowedFields,
-		requireAny:    []string{"api_key", "access_token", "refresh_token", "id_token", "token"},
+		validate:      validateProviderRequiresAccessToken,
 	},
 	"claude": {
 		allowedFields: commonImportAllowedFields,
-		requireAny:    []string{"api_key", "access_token", "refresh_token", "id_token", "token"},
+		validate:      validateProviderRequiresAccessToken,
 	},
 	"gemini": {
 		allowedFields: commonImportAllowedFields,
-		requireAny:    []string{"token", "refresh_token", "access_token", "api_key"},
+		validate:      validateGeminiProvider,
 	},
 	"antigravity": {
 		allowedFields: commonImportAllowedFields,
-		requireAny:    []string{"access_token", "refresh_token", "token", "api_key"},
+		validate:      validateProviderRequiresAccessToken,
 	},
 	"qwen": {
 		allowedFields: commonImportAllowedFields,
-		requireAny:    []string{"access_token", "refresh_token", "token", "api_key"},
+		validate:      validateProviderRequiresAccessToken,
 	},
 	"kiro": {
 		allowedFields: commonImportAllowedFields,
-		requireAny:    []string{"access_token", "refresh_token", "token"},
+		validate:      validateProviderRequiresAccessToken,
 	},
 	"iflow": {
 		allowedFields: commonImportAllowedFields,
-		requireAny:    []string{"api_key", "access_token", "refresh_token", "cookie", "bxauth", "token"},
+		validate:      validateIFlowProvider,
 	},
 }
 
@@ -129,17 +132,7 @@ func normalizeProviderEntry(provider string, raw map[string]any) (map[string]any
 		return nil, fmt.Errorf("unsupported provider")
 	}
 
-	key := extractProviderImportKey(raw)
-	if key == "" {
-		return nil, fmt.Errorf("missing key")
-	}
-
-	if len(rule.requireAny) > 0 && !hasAnyRequiredCredentialField(raw, rule.requireAny) {
-		return nil, fmt.Errorf("missing credential fields for provider %s", canonicalProvider)
-	}
-
 	normalized := map[string]any{
-		"key":  key,
 		"type": canonicalProvider,
 	}
 
@@ -157,6 +150,14 @@ func normalizeProviderEntry(provider string, raw map[string]any) (map[string]any
 	if proxyURL, okProxy := normalized["proxy_url"].(string); okProxy {
 		normalized["proxy_url"] = strings.TrimSpace(proxyURL)
 	}
+
+	if rule.validate != nil {
+		if errValidate := rule.validate(normalized); errValidate != nil {
+			return nil, errValidate
+		}
+	}
+
+	normalized["key"] = generateImportKey(canonicalProvider, normalized)
 
 	return normalized, nil
 }
@@ -214,17 +215,93 @@ func pickImportFieldValue(entry map[string]any, field string) (any, bool) {
 	return value, true
 }
 
-func hasAnyRequiredCredentialField(entry map[string]any, fields []string) bool {
-	for _, field := range fields {
-		value, okValue := pickImportFieldValue(entry, field)
-		if !okValue {
+func validateProviderRequiresAccessToken(entry map[string]any) error {
+	if hasNonEmptyStringField(entry, "access_token") {
+		return nil
+	}
+	return fmt.Errorf("missing required field access_token")
+}
+
+func validateGeminiProvider(entry map[string]any) error {
+	if hasNonEmptyStringField(entry, "access_token") || hasNestedTokenAccessToken(entry) {
+		return nil
+	}
+	return fmt.Errorf("missing required field access_token or token.access_token")
+}
+
+func validateIFlowProvider(entry map[string]any) error {
+	modeAPIKey := hasNonEmptyStringField(entry, "api_key")
+	modeCookie := hasNonEmptyStringField(entry, "cookie") && hasNonEmptyStringField(entry, "email")
+	modeOAuth := hasNonEmptyStringField(entry, "refresh_token")
+	if modeAPIKey || modeCookie || modeOAuth {
+		return nil
+	}
+	return fmt.Errorf("iflow requires one mode: api_key OR (cookie+email) OR refresh_token")
+}
+
+func hasNestedTokenAccessToken(entry map[string]any) bool {
+	if entry == nil {
+		return false
+	}
+	tokenValue, okToken := entry["token"]
+	if !okToken {
+		return false
+	}
+	tokenMap, okMap := tokenValue.(map[string]any)
+	if !okMap {
+		return false
+	}
+	accessToken, okAccess := tokenMap["access_token"].(string)
+	if !okAccess {
+		return false
+	}
+	return strings.TrimSpace(accessToken) != ""
+}
+
+func hasNonEmptyStringField(entry map[string]any, field string) bool {
+	if entry == nil {
+		return false
+	}
+	value, okValue := entry[field].(string)
+	if !okValue {
+		return false
+	}
+	return strings.TrimSpace(value) != ""
+}
+
+func normalizeEmailForKey(entry map[string]any) string {
+	if !hasNonEmptyStringField(entry, "email") {
+		return ""
+	}
+	raw, _ := entry["email"].(string)
+	return strings.ToLower(strings.TrimSpace(raw))
+}
+
+func generateImportKey(provider string, normalized map[string]any) string {
+	email := normalizeEmailForKey(normalized)
+	if email != "" {
+		return fmt.Sprintf("%s-%s", provider, email)
+	}
+
+	credentialParts := make([]string, 0, 8)
+	credentialFields := []string{"api_key", "access_token", "refresh_token", "cookie", "bxauth", "client_id", "client_secret"}
+	for _, field := range credentialFields {
+		if !hasNonEmptyStringField(normalized, field) {
 			continue
 		}
-		if isMeaningfulImportValue(value) {
-			return true
-		}
+		raw, _ := normalized[field].(string)
+		credentialParts = append(credentialParts, fmt.Sprintf("%s=%s", field, strings.TrimSpace(raw)))
 	}
-	return false
+	if hasNestedTokenAccessToken(normalized) {
+		tokenMap, _ := normalized["token"].(map[string]any)
+		accessToken, _ := tokenMap["access_token"].(string)
+		credentialParts = append(credentialParts, fmt.Sprintf("token.access_token=%s", strings.TrimSpace(accessToken)))
+	}
+
+	sort.Strings(credentialParts)
+	material := provider + "|" + strings.Join(credentialParts, "|")
+	hash := sha256.Sum256([]byte(material))
+	return fmt.Sprintf("%s-h-%s", provider, hex.EncodeToString(hash[:])[:12])
 }
 
 func isMeaningfulImportValue(value any) bool {

@@ -63,12 +63,12 @@ func TestImportByProvider_AllowsPartialSuccess(t *testing.T) {
 		"source":   "text",
 		"entries": []map[string]any{
 			{
-				"key":           "kiro-ok",
 				"access_token":  "acc-1",
 				"refresh_token": "ref-1",
+				"email":         "Demo@Example.com",
 			},
 			{
-				"key": "kiro-bad",
+				"extra": "bad-without-required-token",
 			},
 		},
 	}
@@ -113,7 +113,50 @@ func TestImportByProvider_AllowsPartialSuccess(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 auth row, got %d", len(rows))
 	}
-	if rows[0].Key != "kiro-ok" {
-		t.Fatalf("expected key kiro-ok, got %q", rows[0].Key)
+	if rows[0].Key != "kiro-demo@example.com" {
+		t.Fatalf("expected auto-generated key kiro-demo@example.com, got %q", rows[0].Key)
+	}
+}
+
+func TestImportByProvider_UsesFallbackKeyWhenEmailMissing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupAuthFileProviderImportDB(t)
+	handler := NewAuthFileHandler(db)
+
+	router := gin.New()
+	router.POST("/v0/admin/auth-files/import-by-provider", handler.ImportByProvider)
+
+	body := map[string]any{
+		"provider": "qwen",
+		"source":   "text",
+		"entries": []map[string]any{
+			{
+				"access_token": "qwen-token-a",
+			},
+		},
+	}
+	raw, errMarshal := json.Marshal(body)
+	if errMarshal != nil {
+		t.Fatalf("marshal request: %v", errMarshal)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v0/admin/auth-files/import-by-provider", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	var rows []models.Auth
+	if errFind := db.Find(&rows).Error; errFind != nil {
+		t.Fatalf("query auth rows: %v", errFind)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 auth row, got %d", len(rows))
+	}
+	if len(rows[0].Key) == 0 || rows[0].Key[:7] != "qwen-h-" {
+		t.Fatalf("expected fallback key prefix qwen-h-, got %q", rows[0].Key)
 	}
 }

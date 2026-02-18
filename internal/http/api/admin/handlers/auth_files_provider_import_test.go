@@ -2,17 +2,17 @@ package handlers
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
-func TestNormalizeProviderEntry_Codex_KeepRequiredFieldsOnly(t *testing.T) {
+func TestNormalizeProviderEntry_Codex_AutoKeyTypeFromEmail(t *testing.T) {
 	t.Parallel()
 
 	raw := map[string]any{
-		"key":           "codex-main",
-		"type":          "codex",
 		"access_token":  "token-123",
 		"refresh_token": "refresh-456",
+		"email":         "User@Example.COM ",
 		"proxy_url":     "http://127.0.0.1:7890",
 		"unused":        "drop-me",
 	}
@@ -25,11 +25,14 @@ func TestNormalizeProviderEntry_Codex_KeepRequiredFieldsOnly(t *testing.T) {
 	if got, _ := normalized["type"].(string); got != "codex" {
 		t.Fatalf("expected type codex, got %q", got)
 	}
-	if got, _ := normalized["key"].(string); got != "codex-main" {
-		t.Fatalf("expected key codex-main, got %q", got)
+	if got, _ := normalized["key"].(string); got != "codex-user@example.com" {
+		t.Fatalf("expected key codex-user@example.com, got %q", got)
 	}
 	if got, _ := normalized["access_token"].(string); got != "token-123" {
 		t.Fatalf("expected access_token token-123, got %q", got)
+	}
+	if got, _ := normalized["email"].(string); got != "User@Example.COM " {
+		t.Fatalf("expected to keep raw email value, got %q", got)
 	}
 	if _, ok := normalized["unused"]; ok {
 		t.Fatalf("expected unused field to be dropped")
@@ -40,17 +43,21 @@ func TestNormalizeProviderEntry_Codex_KeepRequiredFieldsOnly(t *testing.T) {
 	}
 }
 
-func TestNormalizeProviderEntry_Kiro_MissingRequiredField(t *testing.T) {
+func TestGenerateImportKey_FallbackToCredentialHashWhenNoEmail(t *testing.T) {
 	t.Parallel()
 
-	raw := map[string]any{
-		"key":  "kiro-main",
-		"type": "kiro",
-	}
+	key1 := generateImportKey("kiro", map[string]any{"access_token": "at-1", "refresh_token": "rt-1"})
+	key2 := generateImportKey("kiro", map[string]any{"access_token": "at-1", "refresh_token": "rt-1"})
+	key3 := generateImportKey("kiro", map[string]any{"access_token": "at-2", "refresh_token": "rt-1"})
 
-	_, err := normalizeProviderEntry("kiro", raw)
-	if err == nil {
-		t.Fatalf("expected error for missing kiro credential field")
+	if !strings.HasPrefix(key1, "kiro-h-") {
+		t.Fatalf("expected fallback key to start with kiro-h-, got %q", key1)
+	}
+	if key1 != key2 {
+		t.Fatalf("expected stable fallback key, got %q and %q", key1, key2)
+	}
+	if key1 == key3 {
+		t.Fatalf("expected different credential inputs to generate different fallback key")
 	}
 }
 
@@ -64,29 +71,52 @@ func TestNormalizeProviderEntry_UnknownProvider(t *testing.T) {
 	}
 }
 
-func TestNormalizeProviderEntry_IgnoreExtraFields(t *testing.T) {
+func TestNormalizeProviderEntry_IFlow_ThreeModes(t *testing.T) {
+	t.Parallel()
+
+	entries := []map[string]any{
+		{"api_key": "iflow-key-only"},
+		{"cookie": "BXAuth=demo", "email": "iflow@example.com"},
+		{"refresh_token": "iflow-refresh-only"},
+	}
+
+	for i, entry := range entries {
+		normalized, err := normalizeProviderEntry("iflow-cookie", entry)
+		if err != nil {
+			t.Fatalf("mode %d should pass, got error: %v", i+1, err)
+		}
+		if got, _ := normalized["type"].(string); got != "iflow" {
+			t.Fatalf("expected canonical type iflow, got %q", got)
+		}
+		if _, ok := normalized["key"].(string); !ok {
+			t.Fatalf("expected auto-generated key in mode %d", i+1)
+		}
+	}
+}
+
+func TestNormalizeProviderEntry_Gemini_AllowsTokenAccessToken(t *testing.T) {
 	t.Parallel()
 
 	raw := map[string]any{
-		"id":            "qwen-main",
-		"access_token":  "qwen-token",
-		"refresh_token": "qwen-refresh",
-		"extra_a":       true,
-		"extra_b":       123,
+		"email": "gem@example.com",
+		"token": map[string]any{
+			"access_token": "nested-token",
+		},
+		"extra_a": true,
 	}
 
-	normalized, err := normalizeProviderEntry("qwen", raw)
+	normalized, err := normalizeProviderEntry("gemini-cli", raw)
 	if err != nil {
 		t.Fatalf("normalizeProviderEntry returned error: %v", err)
 	}
 
-	if got, _ := normalized["key"].(string); got != "qwen-main" {
-		t.Fatalf("expected key qwen-main from id fallback, got %q", got)
+	if got, _ := normalized["type"].(string); got != "gemini" {
+		t.Fatalf("expected canonical type gemini, got %q", got)
+	}
+	if _, ok := normalized["token"].(map[string]any); !ok {
+		t.Fatalf("expected nested token map to be preserved")
 	}
 	if _, ok := normalized["extra_a"]; ok {
-		t.Fatalf("expected extra_a to be dropped")
-	}
-	if _, ok := normalized["extra_b"]; ok {
-		t.Fatalf("expected extra_b to be dropped")
+		t.Fatalf("expected extra field to be dropped")
 	}
 }
