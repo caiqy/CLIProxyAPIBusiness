@@ -107,6 +107,9 @@ func migratePostgres(conn *gorm.DB) error {
 	if errSeed := ensureUsagesRetentionSetting(conn); errSeed != nil {
 		return errSeed
 	}
+	if errSeed := ensureOAuthCallbackHostSetting(conn); errSeed != nil {
+		return errSeed
+	}
 	if errAuthGroup := migrateAuthGroupIDsPostgres(conn); errAuthGroup != nil {
 		return errAuthGroup
 	}
@@ -925,6 +928,9 @@ func migrateSQLite(conn *gorm.DB) error {
 	if errSeed := ensureUsagesRetentionSetting(conn); errSeed != nil {
 		return errSeed
 	}
+	if errSeed := ensureOAuthCallbackHostSetting(conn); errSeed != nil {
+		return errSeed
+	}
 	if errAuthGroup := migrateAuthGroupIDsSQLite(conn); errAuthGroup != nil {
 		return errAuthGroup
 	}
@@ -1727,6 +1733,11 @@ func ensureUsagesRetentionSetting(conn *gorm.DB) error {
 	return ensureIntSetting(conn, internalsettings.UsagesRetentionDaysKey, internalsettings.DefaultUsagesRetentionDays)
 }
 
+// ensureOAuthCallbackHostSetting ensures OAUTH_CALLBACK_HOST exists with defaults.
+func ensureOAuthCallbackHostSetting(conn *gorm.DB) error {
+	return ensureStringSetting(conn, internalsettings.OAuthCallbackHostKey, internalsettings.DefaultOAuthCallbackHost)
+}
+
 // ensureIntSetting ensures an integer setting exists and defaults when empty.
 func ensureIntSetting(conn *gorm.DB, key string, value int) error {
 	payload, errMarshal := json.Marshal(value)
@@ -1775,6 +1786,42 @@ func ensureBoolSetting(conn *gorm.DB, key string, value bool) error {
 	if errFind := conn.Where("key = ?", key).First(&existing).Error; errFind == nil {
 		trimmed := strings.TrimSpace(string(existing.Value))
 		if len(existing.Value) == 0 || trimmed == "" || trimmed == "null" {
+			if errUpdate := conn.Model(&existing).Updates(map[string]any{
+				"value":      rawValue,
+				"updated_at": time.Now().UTC(),
+			}).Error; errUpdate != nil {
+				return fmt.Errorf("db: update %s setting: %w", key, errUpdate)
+			}
+		}
+		return nil
+	} else if !errors.Is(errFind, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("db: query %s setting: %w", key, errFind)
+	}
+
+	now := time.Now().UTC()
+	setting := models.Setting{
+		Key:       key,
+		Value:     rawValue,
+		UpdatedAt: now,
+	}
+	if errCreate := conn.Create(&setting).Error; errCreate != nil {
+		return fmt.Errorf("db: create %s setting: %w", key, errCreate)
+	}
+	return nil
+}
+
+// ensureStringSetting ensures a string setting exists and defaults when empty.
+func ensureStringSetting(conn *gorm.DB, key string, value string) error {
+	payload, errMarshal := json.Marshal(strings.TrimSpace(value))
+	if errMarshal != nil {
+		return fmt.Errorf("db: marshal %s setting: %w", key, errMarshal)
+	}
+	rawValue := json.RawMessage(payload)
+
+	var existing models.Setting
+	if errFind := conn.Where("key = ?", key).First(&existing).Error; errFind == nil {
+		trimmed := strings.TrimSpace(string(existing.Value))
+		if len(existing.Value) == 0 || trimmed == "" || trimmed == "null" || trimmed == `""` {
 			if errUpdate := conn.Model(&existing).Updates(map[string]any{
 				"value":      rawValue,
 				"updated_at": time.Now().UTC(),

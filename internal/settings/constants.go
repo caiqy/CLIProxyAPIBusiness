@@ -26,6 +26,8 @@ const (
 	RateLimitRedisPrefixKey = "RATE_LIMIT_REDIS_PREFIX"
 	// UsagesRetentionDaysKey controls how many days to retain usages rows.
 	UsagesRetentionDaysKey = "USAGES_RETENTION_DAYS"
+	// OAuthCallbackHostKey controls the host used in local OAuth callback redirect URIs.
+	OAuthCallbackHostKey = "OAUTH_CALLBACK_HOST"
 	// DefaultQuotaPollIntervalSeconds is the fallback poll interval (seconds).
 	DefaultQuotaPollIntervalSeconds = 180
 	// DefaultQuotaPollMaxConcurrency is the fallback max concurrency.
@@ -38,4 +40,6 @@ const (
 	DefaultRateLimitRedisPrefix = "cpab:rl"
 	// DefaultUsagesRetentionDays is the fallback usages retention period.
 	DefaultUsagesRetentionDays = 90
+	// DefaultOAuthCallbackHost is the fallback local OAuth callback host.
+	DefaultOAuthCallbackHost = "localhost"
 )

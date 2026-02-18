@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/http/api/admin/permissions"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/models"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/security"
+	internalsettings "github.com/router-for-me/CLIProxyAPIBusiness/internal/settings"
 	"gorm.io/gorm"
 )
 
@@ -215,16 +217,60 @@ func RegisterAdminRoutes(r *gin.Engine, db *gorm.DB, jwtCfg config.JWTConfig, co
 
 	if baseHandler != nil && baseHandler.AuthManager != nil {
 		tokenRequester := sdkapi.NewManagementTokenRequester(cfg, baseHandler.AuthManager)
-		authed.POST("/tokens/anthropic", tokenRequester.RequestAnthropicToken)
-		authed.POST("/tokens/gemini", tokenRequester.RequestGeminiCLIToken)
-		authed.POST("/tokens/codex", tokenRequester.RequestCodexToken)
-		authed.POST("/tokens/antigravity", tokenRequester.RequestAntigravityToken)
+		withOAuthCallbackDefaults := func(next func(*gin.Context)) gin.HandlerFunc {
+			return func(c *gin.Context) {
+				query := c.Request.URL.Query()
+				if strings.TrimSpace(query.Get("is_webui")) == "" {
+					query.Set("is_webui", "1")
+				}
+				if strings.TrimSpace(query.Get("callback_host")) == "" {
+					query.Set("callback_host", oauthCallbackHostSetting())
+				}
+				c.Request.URL.RawQuery = query.Encode()
+				next(c)
+			}
+		}
+		authed.POST("/tokens/anthropic", withOAuthCallbackDefaults(tokenRequester.RequestAnthropicToken))
+		authed.POST("/tokens/gemini", withOAuthCallbackDefaults(tokenRequester.RequestGeminiCLIToken))
+		authed.POST("/tokens/codex", withOAuthCallbackDefaults(tokenRequester.RequestCodexToken))
+		authed.POST("/tokens/antigravity", withOAuthCallbackDefaults(tokenRequester.RequestAntigravityToken))
 		authed.POST("/tokens/qwen", tokenRequester.RequestQwenToken)
-		authed.POST("/tokens/iflow", tokenRequester.RequestIFlowToken)
+		authed.POST("/tokens/iflow", withOAuthCallbackDefaults(tokenRequester.RequestIFlowToken))
 		authed.POST("/tokens/iflow-cookie", tokenRequester.RequestIFlowCookieToken)
 		authed.POST("/tokens/get-auth-status", tokenRequester.GetAuthStatus)
 		authed.POST("/tokens/oauth-callback", tokenRequester.PostOAuthCallback)
 	}
+}
+
+func oauthCallbackHostSetting() string {
+	raw, ok := internalsettings.DBConfigValue(internalsettings.OAuthCallbackHostKey)
+	if !ok {
+		return internalsettings.DefaultOAuthCallbackHost
+	}
+	host := parseDBConfigString(raw)
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return internalsettings.DefaultOAuthCallbackHost
+	}
+	return host
+}
+
+func parseDBConfigString(raw json.RawMessage) string {
+	raw = json.RawMessage(strings.TrimSpace(string(raw)))
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var s string
+	if errUnmarshal := json.Unmarshal(raw, &s); errUnmarshal == nil {
+		return strings.TrimSpace(s)
+	}
+	var wrapper struct {
+		Value json.RawMessage `json:"value"`
+	}
+	if errUnmarshal := json.Unmarshal(raw, &wrapper); errUnmarshal == nil {
+		return parseDBConfigString(wrapper.Value)
+	}
+	return ""
 }
 
 // adminAuthMiddleware validates admin JWTs and loads admin context.
