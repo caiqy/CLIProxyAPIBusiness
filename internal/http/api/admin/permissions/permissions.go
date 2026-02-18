@@ -162,6 +162,8 @@ var definitions = []Definition{
 	newDefinition("GET", "/v0/admin/auth-files/types", "List Auth File Types", "Auth Files"),
 
 	newDefinition("GET", "/v0/admin/quotas", "List Quotas", "Quota"),
+	newDefinition("POST", "/v0/admin/quotas/manual-refresh", "Trigger Quota Manual Refresh", "Quota"),
+	newDefinition("GET", "/v0/admin/quotas/manual-refresh/:task_id", "Get Quota Manual Refresh Task", "Quota"),
 
 	newDefinition("POST", "/v0/admin/model-mappings", "Create Model Mapping", "Models"),
 	newDefinition("GET", "/v0/admin/model-mappings", "List Model Mappings", "Models"),

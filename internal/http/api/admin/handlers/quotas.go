@@ -16,12 +16,17 @@ import (
 
 // QuotaHandler handles admin quota endpoints.
 type QuotaHandler struct {
-	db *gorm.DB
+	db              *gorm.DB
+	manualRefresher quotaManualRefresher
+	taskStore       *quotaManualRefreshTaskStore
 }
 
 // NewQuotaHandler constructs a QuotaHandler.
-func NewQuotaHandler(db *gorm.DB) *QuotaHandler {
-	return &QuotaHandler{db: db}
+func NewQuotaHandler(db *gorm.DB, manualRefresher quotaManualRefresher, taskStore *quotaManualRefreshTaskStore) *QuotaHandler {
+	if taskStore == nil {
+		taskStore = NewQuotaManualRefreshTaskStore(24*time.Hour, 200)
+	}
+	return &QuotaHandler{db: db, manualRefresher: manualRefresher, taskStore: taskStore}
 }
 
 // quotaListQuery defines filters for the quota list view.

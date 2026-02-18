@@ -1,9 +1,11 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	sdkapi "github.com/router-for-me/CLIProxyAPI/v6/sdk/api"
@@ -13,6 +15,7 @@ import (
 	handlers "github.com/router-for-me/CLIProxyAPIBusiness/internal/http/api/admin/handlers"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/http/api/admin/permissions"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/models"
+	"github.com/router-for-me/CLIProxyAPIBusiness/internal/quota"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/security"
 	internalsettings "github.com/router-for-me/CLIProxyAPIBusiness/internal/settings"
 	"gorm.io/gorm"
@@ -115,8 +118,17 @@ func RegisterAdminRoutes(r *gin.Engine, db *gorm.DB, jwtCfg config.JWTConfig, co
 	authed.POST("/auth-files/:id/unavailable", authFileHandler.SetUnavailable)
 	authed.GET("/auth-files/types", authFileHandler.ListTypes)
 
-	quotaHandler := handlers.NewQuotaHandler(db)
+	var quotaRefresher interface {
+		RefreshByAuthKey(ctx context.Context, authKey string) error
+	}
+	if baseHandler != nil && baseHandler.AuthManager != nil {
+		quotaRefresher = quota.NewPoller(db, baseHandler.AuthManager)
+	}
+	quotaTaskStore := handlers.NewQuotaManualRefreshTaskStore(24*time.Hour, 200)
+	quotaHandler := handlers.NewQuotaHandler(db, quotaRefresher, quotaTaskStore)
 	authed.GET("/quotas", quotaHandler.List)
+	authed.POST("/quotas/manual-refresh", quotaHandler.CreateManualRefresh)
+	authed.GET("/quotas/manual-refresh/:task_id", quotaHandler.GetManualRefresh)
 
 	userGroupHandler := handlers.NewUserGroupHandler(db)
 	authed.POST("/user-groups", userGroupHandler.Create)

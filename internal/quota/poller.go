@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -43,6 +44,8 @@ var (
 	}
 	geminiCLIQuotaURL = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota"
 	codexUsageURL     = "https://chatgpt.com/backend-api/wham/usage"
+
+	ErrUnsupportedProvider = errors.New("quota poller: unsupported provider")
 )
 
 type authRowInfo struct {
@@ -174,25 +177,118 @@ func (p *Poller) poll(ctx context.Context) time.Duration {
 		wg.Add(1)
 		authCopy := auth
 		rowCopy := row
-		providerCopy := provider
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			switch providerCopy {
-			case "antigravity":
-				p.pollAntigravity(ctx, authCopy, rowCopy)
-			case "codex":
-				p.pollCodex(ctx, authCopy, rowCopy)
-			case "gemini-cli":
-				p.pollGeminiCLI(ctx, authCopy, rowCopy)
-			default:
-				return
+			if errRefresh := p.refreshAuth(ctx, authCopy, rowCopy); errRefresh != nil && !errors.Is(errRefresh, ErrUnsupportedProvider) {
+				log.WithError(errRefresh).Warnf("quota poller: refresh failed (auth=%s)", authCopy.ID)
 			}
 		}()
 	}
 
 	wg.Wait()
 	return interval
+}
+
+func (p *Poller) refreshAuth(ctx context.Context, auth *coreauth.Auth, row authRowInfo) error {
+	if p == nil {
+		return errors.New("quota poller: poller not initialized")
+	}
+	if auth == nil || strings.TrimSpace(auth.ID) == "" {
+		return errors.New("quota poller: auth not found")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	provider := strings.ToLower(strings.TrimSpace(auth.Provider))
+	if provider == "" {
+		provider = strings.ToLower(strings.TrimSpace(row.Type))
+	}
+
+	switch provider {
+	case "antigravity":
+		return p.pollAntigravity(ctx, auth, row)
+	case "codex":
+		return p.pollCodex(ctx, auth, row)
+	case "gemini-cli":
+		return p.pollGeminiCLI(ctx, auth, row)
+	default:
+		return ErrUnsupportedProvider
+	}
+}
+
+func (p *Poller) RefreshByAuthKey(ctx context.Context, authKey string) error {
+	if p == nil || p.manager == nil {
+		return errors.New("quota poller: manager not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	authKey = strings.TrimSpace(authKey)
+	if authKey == "" {
+		return errors.New("quota poller: auth key is required")
+	}
+
+	var targetAuth *coreauth.Auth
+	for _, auth := range p.manager.List() {
+		if auth == nil {
+			continue
+		}
+		if strings.TrimSpace(auth.ID) == authKey {
+			targetAuth = auth
+			break
+		}
+	}
+	if targetAuth == nil {
+		return fmt.Errorf("quota poller: auth key not found: %s", authKey)
+	}
+
+	row, ok, errRow := p.loadAuthRowByKey(ctx, authKey)
+	if errRow != nil {
+		return errRow
+	}
+	if !ok {
+		return fmt.Errorf("quota poller: auth key not found: %s", authKey)
+	}
+	if row.RuntimeOnly {
+		return fmt.Errorf("quota poller: auth key is runtime-only: %s", authKey)
+	}
+
+	return p.refreshAuth(ctx, targetAuth, row)
+}
+
+func (p *Poller) loadAuthRowByKey(ctx context.Context, authKey string) (authRowInfo, bool, error) {
+	if p == nil || p.db == nil {
+		return authRowInfo{}, false, errors.New("quota poller: db not initialized")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	authKey = strings.TrimSpace(authKey)
+	if authKey == "" {
+		return authRowInfo{}, false, errors.New("quota poller: auth key is required")
+	}
+
+	var row models.Auth
+	errFind := p.db.WithContext(ctx).
+		Select("id", "key", "content").
+		Where("key = ?", authKey).
+		First(&row).Error
+	if errors.Is(errFind, gorm.ErrRecordNotFound) {
+		return authRowInfo{}, false, nil
+	}
+	if errFind != nil {
+		return authRowInfo{}, false, errFind
+	}
+
+	metadata := parseMetadata(row.Content)
+	return authRowInfo{
+		ID:          row.ID,
+		Type:        normalizeString(metadata["type"]),
+		RuntimeOnly: isRuntimeOnly(metadata),
+	}, true, nil
 }
 
 func (p *Poller) loadAuthRows(ctx context.Context) (map[string]authRowInfo, error) {
@@ -243,35 +339,43 @@ func (p *Poller) resolvePollConfig() (time.Duration, int) {
 	return time.Duration(intervalSeconds) * time.Second, maxConcurrency
 }
 
-func (p *Poller) pollAntigravity(ctx context.Context, auth *coreauth.Auth, row authRowInfo) {
+func (p *Poller) pollAntigravity(ctx context.Context, auth *coreauth.Auth, row authRowInfo) error {
 	headers := http.Header{}
 	headers.Set("Content-Type", "application/json")
 	headers.Set("User-Agent", antigravityUserAgent)
 	body := []byte("{}")
+	var lastErr error
 
 	for _, url := range antigravityQuotaURLs {
 		status, payload, errReq := p.doRequest(ctx, auth, http.MethodPost, url, body, headers)
 		if errReq != nil {
 			log.WithError(errReq).Warnf("quota poller: antigravity request failed (auth=%s)", auth.ID)
+			lastErr = errReq
 			continue
 		}
 		if status < http.StatusOK || status >= http.StatusMultipleChoices {
 			log.Warnf("quota poller: antigravity status=%d (auth=%s body=%s)", status, auth.ID, summarizePayload(payload))
+			lastErr = fmt.Errorf("quota poller: antigravity non-2xx status=%d", status)
 			continue
 		}
 		if errSave := p.saveQuota(ctx, row.ID, row.Type, payload); errSave != nil {
 			log.WithError(errSave).Warnf("quota poller: antigravity save failed (auth=%s)", auth.ID)
+			return errSave
 		}
-		return
+		return nil
 	}
+	if lastErr == nil {
+		lastErr = errors.New("quota poller: antigravity refresh failed")
+	}
+	return lastErr
 }
 
-func (p *Poller) pollCodex(ctx context.Context, auth *coreauth.Auth, row authRowInfo) {
+func (p *Poller) pollCodex(ctx context.Context, auth *coreauth.Auth, row authRowInfo) error {
 	metadata := auth.Metadata
 	accountID := resolveCodexAccountID(metadata)
 	if accountID == "" {
 		log.Warnf("quota poller: codex missing account id (auth=%s)", auth.ID)
-		return
+		return errors.New("quota poller: codex missing account id")
 	}
 
 	headers := http.Header{}
@@ -282,23 +386,25 @@ func (p *Poller) pollCodex(ctx context.Context, auth *coreauth.Auth, row authRow
 	status, payload, errReq := p.doRequest(ctx, auth, http.MethodGet, codexUsageURL, nil, headers)
 	if errReq != nil {
 		log.WithError(errReq).Warnf("quota poller: codex request failed (auth=%s)", auth.ID)
-		return
+		return errReq
 	}
 	if status < http.StatusOK || status >= http.StatusMultipleChoices {
 		log.Warnf("quota poller: codex status=%d (auth=%s body=%s)", status, auth.ID, summarizePayload(payload))
-		return
+		return fmt.Errorf("quota poller: codex non-2xx status=%d", status)
 	}
 	if errSave := p.saveQuota(ctx, row.ID, row.Type, payload); errSave != nil {
 		log.WithError(errSave).Warnf("quota poller: codex save failed (auth=%s)", auth.ID)
+		return errSave
 	}
+	return nil
 }
 
-func (p *Poller) pollGeminiCLI(ctx context.Context, auth *coreauth.Auth, row authRowInfo) {
+func (p *Poller) pollGeminiCLI(ctx context.Context, auth *coreauth.Auth, row authRowInfo) error {
 	metadata := auth.Metadata
 	projectID := resolveGeminiProjectID(metadata)
 	if projectID == "" {
 		log.Warnf("quota poller: gemini-cli missing project id (auth=%s)", auth.ID)
-		return
+		return errors.New("quota poller: gemini-cli missing project id")
 	}
 
 	headers := http.Header{}
@@ -306,21 +412,23 @@ func (p *Poller) pollGeminiCLI(ctx context.Context, auth *coreauth.Auth, row aut
 	body, errMarshal := json.Marshal(map[string]string{"project": projectID})
 	if errMarshal != nil {
 		log.WithError(errMarshal).Warnf("quota poller: gemini-cli request body failed (auth=%s)", auth.ID)
-		return
+		return errMarshal
 	}
 
 	status, payload, errReq := p.doRequest(ctx, auth, http.MethodPost, geminiCLIQuotaURL, body, headers)
 	if errReq != nil {
 		log.WithError(errReq).Warnf("quota poller: gemini-cli request failed (auth=%s)", auth.ID)
-		return
+		return errReq
 	}
 	if status < http.StatusOK || status >= http.StatusMultipleChoices {
 		log.Warnf("quota poller: gemini-cli status=%d (auth=%s body=%s)", status, auth.ID, summarizePayload(payload))
-		return
+		return fmt.Errorf("quota poller: gemini-cli non-2xx status=%d", status)
 	}
 	if errSave := p.saveQuota(ctx, row.ID, row.Type, payload); errSave != nil {
 		log.WithError(errSave).Warnf("quota poller: gemini-cli save failed (auth=%s)", auth.ID)
+		return errSave
 	}
+	return nil
 }
 
 func (p *Poller) doRequest(ctx context.Context, auth *coreauth.Auth, method, targetURL string, body []byte, headers http.Header) (int, []byte, error) {
