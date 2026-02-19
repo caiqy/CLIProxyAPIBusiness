@@ -24,6 +24,7 @@ const (
 	providerGemini = "gemini"
 	providerCodex  = "codex"
 	providerClaude = "claude"
+	providerVertex = "vertex"
 	providerOpenAI = "openai-compatibility"
 )
 
@@ -33,6 +34,8 @@ var providerAliases = map[string]string{
 	"codex":                     providerCodex,
 	"claude":                    providerClaude,
 	"claude-code":               providerClaude,
+	"vertex":                    providerVertex,
+	"vertex-api-key":            providerVertex,
 	"openai":                    providerOpenAI,
 	"openai-chat-completions":   providerOpenAI,
 	"openai-compatibility":      providerOpenAI,
@@ -495,6 +498,7 @@ func (h *ProviderAPIKeyHandler) syncSDKConfig(ctx context.Context) error {
 	geminiKeys := make([]sdkconfig.GeminiKey, 0)
 	codexKeys := make([]sdkconfig.CodexKey, 0)
 	claudeKeys := make([]sdkconfig.ClaudeKey, 0)
+	vertexKeys := make([]sdkconfig.VertexCompatKey, 0)
 	openAIProviders := make([]sdkconfig.OpenAICompatibility, 0)
 
 	for i := range rows {
@@ -545,6 +549,19 @@ func (h *ProviderAPIKeyHandler) syncSDKConfig(ctx context.Context) error {
 			if entry.APIKey != "" {
 				claudeKeys = append(claudeKeys, entry)
 			}
+		case providerVertex:
+			entry := sdkconfig.VertexCompatKey{
+				APIKey:   strings.TrimSpace(row.APIKey),
+				Priority: row.Priority,
+				Prefix:   strings.TrimSpace(row.Prefix),
+				BaseURL:  strings.TrimSpace(row.BaseURL),
+				ProxyURL: strings.TrimSpace(row.ProxyURL),
+				Headers:  decodeHeaders(row.Headers),
+			}
+			applyJSON(row.Models, &entry.Models)
+			if entry.APIKey != "" && entry.BaseURL != "" {
+				vertexKeys = append(vertexKeys, entry)
+			}
 		case providerOpenAI:
 			entry := sdkconfig.OpenAICompatibility{
 				Name:          strings.TrimSpace(row.Name),
@@ -565,12 +582,14 @@ func (h *ProviderAPIKeyHandler) syncSDKConfig(ctx context.Context) error {
 	cfg.GeminiKey = geminiKeys
 	cfg.CodexKey = codexKeys
 	cfg.ClaudeKey = claudeKeys
+	cfg.VertexCompatAPIKey = vertexKeys
 	cfg.OpenAICompatibility = openAIProviders
 	cfg.OAuthModelAlias = buildOAuthModelMappings(mappingRows)
 
 	cfg.SanitizeGeminiKeys()
 	cfg.SanitizeCodexKeys()
 	cfg.SanitizeClaudeKeys()
+	cfg.SanitizeVertexCompatKeys()
 	cfg.SanitizeOpenAICompatibility()
 
 	return sdkconfig.SaveConfigPreserveComments(configPath, cfg)
@@ -633,6 +652,9 @@ func normalizeProviderFields(row *models.ProviderAPIKey) {
 		row.APIKey = ""
 		row.ProxyURL = ""
 		row.ExcludedModels = nil
+	case providerVertex:
+		row.APIKeyEntries = nil
+		row.ExcludedModels = nil
 	default:
 		row.APIKeyEntries = nil
 	}
@@ -652,7 +674,7 @@ func ensureProviderName(row *models.ProviderAPIKey) {
 		return
 	}
 	switch provider {
-	case providerGemini, providerCodex, providerClaude:
+	case providerGemini, providerCodex, providerClaude, providerVertex:
 		row.Name = maskAPIKey(strings.TrimSpace(row.APIKey))
 	}
 }
@@ -695,6 +717,16 @@ func validateProviderRow(row *models.ProviderAPIKey) error {
 	case providerClaude:
 		if strings.TrimSpace(row.APIKey) == "" {
 			return errors.New("api_key is required")
+		}
+		if strings.TrimSpace(row.Name) == "" {
+			return errors.New("name is required")
+		}
+	case providerVertex:
+		if strings.TrimSpace(row.APIKey) == "" {
+			return errors.New("api_key is required")
+		}
+		if strings.TrimSpace(row.BaseURL) == "" {
+			return errors.New("base_url is required")
 		}
 		if strings.TrimSpace(row.Name) == "" {
 			return errors.New("name is required")
