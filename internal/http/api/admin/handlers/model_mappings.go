@@ -18,6 +18,32 @@ type ModelMappingHandler struct {
 	db *gorm.DB // Database handle for model mapping records.
 }
 
+type providerCatalogItem struct {
+	ID             string `json:"id"`
+	Label          string `json:"label"`
+	Category       string `json:"category"`
+	SupportsModels bool   `json:"supports_models"`
+}
+
+func listProviderCatalog() []providerCatalogItem {
+	return []providerCatalogItem{
+		{ID: "gemini", Label: "Gemini", Category: "oauth", SupportsModels: true},
+		{ID: "vertex", Label: "Vertex", Category: "oauth", SupportsModels: true},
+		{ID: "gemini-cli", Label: "Gemini CLI", Category: "oauth", SupportsModels: true},
+		{ID: "aistudio", Label: "AI Studio", Category: "oauth", SupportsModels: true},
+		{ID: "antigravity", Label: "Antigravity", Category: "oauth", SupportsModels: true},
+		{ID: "claude", Label: "Claude Code", Category: "oauth", SupportsModels: true},
+		{ID: "codex", Label: "Codex", Category: "oauth", SupportsModels: true},
+		{ID: "qwen", Label: "Qwen", Category: "oauth", SupportsModels: true},
+		{ID: "iflow", Label: "iFlow", Category: "oauth", SupportsModels: true},
+		{ID: "kimi", Label: "Kimi", Category: "oauth", SupportsModels: true},
+		{ID: "github-copilot", Label: "GitHub Copilot", Category: "oauth", SupportsModels: true},
+		{ID: "kiro", Label: "Kiro", Category: "oauth", SupportsModels: true},
+		{ID: "kilo", Label: "Kilo", Category: "oauth", SupportsModels: true},
+		{ID: "openai-compatibility", Label: "OpenAI Chat Completions", Category: "apikey", SupportsModels: true},
+	}
+}
+
 // NewModelMappingHandler constructs a model mapping handler.
 func NewModelMappingHandler(db *gorm.DB) *ModelMappingHandler {
 	return &ModelMappingHandler{db: db}
@@ -344,4 +370,9 @@ func (h *ModelMappingHandler) AvailableModels(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"models": result})
+}
+
+// AvailableProviders lists all provider options used by admin model/billing pages.
+func (h *ModelMappingHandler) AvailableProviders(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"providers": listProviderCatalog()})
 }

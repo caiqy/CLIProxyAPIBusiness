@@ -168,6 +168,7 @@ var definitions = []Definition{
 
 	newDefinition("POST", "/v0/admin/model-mappings", "Create Model Mapping", "Models"),
 	newDefinition("GET", "/v0/admin/model-mappings", "List Model Mappings", "Models"),
+	newDefinition("GET", "/v0/admin/model-mappings/providers", "List Model Mapping Providers", "Models"),
 	newDefinition("GET", "/v0/admin/model-mappings/available-models", "List Available Models", "Models"),
 	newDefinition("GET", "/v0/admin/model-references/price", "Get Model Reference Price", "Models"),
 	newDefinition("GET", "/v0/admin/model-mappings/:id", "Get Model Mapping", "Models"),

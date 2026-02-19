@@ -181,6 +181,7 @@ func RegisterAdminRoutes(r *gin.Engine, db *gorm.DB, jwtCfg config.JWTConfig, co
 	modelMappingHandler := handlers.NewModelMappingHandler(db)
 	authed.POST("/model-mappings", modelMappingHandler.Create)
 	authed.GET("/model-mappings", modelMappingHandler.List)
+	authed.GET("/model-mappings/providers", modelMappingHandler.AvailableProviders)
 	authed.GET("/model-mappings/available-models", modelMappingHandler.AvailableModels)
 	authed.GET("/model-mappings/:id", modelMappingHandler.Get)
 	authed.PUT("/model-mappings/:id", modelMappingHandler.Update)
