@@ -120,3 +120,60 @@ func TestNormalizeProviderEntry_Gemini_AllowsTokenAccessToken(t *testing.T) {
 		t.Fatalf("expected extra field to be dropped")
 	}
 }
+
+func TestNormalizeProviderEntry_Kimi_AccessTokenRequired(t *testing.T) {
+	t.Parallel()
+
+	if _, err := normalizeProviderEntry("kimi", map[string]any{"refresh_token": "rt-only"}); err == nil {
+		t.Fatalf("expected kimi import to require access_token")
+	}
+
+	normalized, err := normalizeProviderEntry("kimi", map[string]any{
+		"access_token": "kimi-at",
+		"email":        "kimi@example.com",
+	})
+	if err != nil {
+		t.Fatalf("expected kimi entry with access_token to pass, got error: %v", err)
+	}
+	if got, _ := normalized["type"].(string); got != "kimi" {
+		t.Fatalf("expected canonical type kimi, got %q", got)
+	}
+}
+
+func TestNormalizeProviderEntry_GitHubCopilot_AccessTokenRequired(t *testing.T) {
+	t.Parallel()
+
+	if _, err := normalizeProviderEntry("github-copilot", map[string]any{"refresh_token": "rt-only"}); err == nil {
+		t.Fatalf("expected github-copilot import to require access_token")
+	}
+
+	normalized, err := normalizeProviderEntry("github-copilot", map[string]any{
+		"access_token": "gh-at",
+		"email":        "gh@example.com",
+	})
+	if err != nil {
+		t.Fatalf("expected github-copilot entry with access_token to pass, got error: %v", err)
+	}
+	if got, _ := normalized["type"].(string); got != "github-copilot" {
+		t.Fatalf("expected canonical type github-copilot, got %q", got)
+	}
+}
+
+func TestNormalizeProviderEntry_Kilo_AccessTokenRequired(t *testing.T) {
+	t.Parallel()
+
+	if _, err := normalizeProviderEntry("kilo", map[string]any{"organization_id": "org-1"}); err == nil {
+		t.Fatalf("expected kilo import to require access_token")
+	}
+
+	normalized, err := normalizeProviderEntry("kilo", map[string]any{
+		"access_token":    "kilo-at",
+		"organization_id": "org-1",
+	})
+	if err != nil {
+		t.Fatalf("expected kilo entry with access_token to pass, got error: %v", err)
+	}
+	if got, _ := normalized["type"].(string); got != "kilo" {
+		t.Fatalf("expected canonical type kilo, got %q", got)
+	}
+}

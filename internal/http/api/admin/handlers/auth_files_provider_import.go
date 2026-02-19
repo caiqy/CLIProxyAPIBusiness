@@ -42,16 +42,19 @@ type providerImportRule struct {
 }
 
 var providerAliasToCanonical = map[string]string{
-	"codex":        "codex",
-	"anthropic":    "claude",
-	"claude":       "claude",
-	"gemini":       "gemini",
-	"gemini-cli":   "gemini",
-	"antigravity":  "antigravity",
-	"qwen":         "qwen",
-	"kiro":         "kiro",
-	"iflow":        "iflow",
-	"iflow-cookie": "iflow",
+	"codex":          "codex",
+	"anthropic":      "claude",
+	"claude":         "claude",
+	"gemini":         "gemini",
+	"gemini-cli":     "gemini",
+	"antigravity":    "antigravity",
+	"qwen":           "qwen",
+	"kiro":           "kiro",
+	"kimi":           "kimi",
+	"github-copilot": "github-copilot",
+	"kilo":           "kilo",
+	"iflow":          "iflow",
+	"iflow-cookie":   "iflow",
 }
 
 var commonImportAllowedFields = []string{
@@ -108,6 +111,18 @@ var providerImportRules = map[string]providerImportRule{
 		validate:      validateProviderRequiresAccessToken,
 	},
 	"kiro": {
+		allowedFields: commonImportAllowedFields,
+		validate:      validateProviderRequiresAccessToken,
+	},
+	"kimi": {
+		allowedFields: commonImportAllowedFields,
+		validate:      validateProviderRequiresAccessToken,
+	},
+	"github-copilot": {
+		allowedFields: commonImportAllowedFields,
+		validate:      validateProviderRequiresAccessToken,
+	},
+	"kilo": {
 		allowedFields: commonImportAllowedFields,
 		validate:      validateProviderRequiresAccessToken,
 	},

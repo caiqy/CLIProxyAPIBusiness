@@ -160,3 +160,47 @@ func TestImportByProvider_UsesFallbackKeyWhenEmailMissing(t *testing.T) {
 		t.Fatalf("expected fallback key prefix qwen-h-, got %q", rows[0].Key)
 	}
 }
+
+func TestImportByProvider_GitHubCopilot_SucceedsWithAccessTokenOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupAuthFileProviderImportDB(t)
+	handler := NewAuthFileHandler(db)
+
+	router := gin.New()
+	router.POST("/v0/admin/auth-files/import-by-provider", handler.ImportByProvider)
+
+	body := map[string]any{
+		"provider": "github-copilot",
+		"source":   "text",
+		"entries": []map[string]any{
+			{
+				"access_token": "gh-token-a",
+				"email":        "copilot@example.com",
+			},
+		},
+	}
+	raw, errMarshal := json.Marshal(body)
+	if errMarshal != nil {
+		t.Fatalf("marshal request: %v", errMarshal)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v0/admin/auth-files/import-by-provider", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	var rows []models.Auth
+	if errFind := db.Find(&rows).Error; errFind != nil {
+		t.Fatalf("query auth rows: %v", errFind)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 auth row, got %d", len(rows))
+	}
+	if rows[0].Key != "github-copilot-copilot@example.com" {
+		t.Fatalf("expected auto-generated key github-copilot-copilot@example.com, got %q", rows[0].Key)
+	}
+}
