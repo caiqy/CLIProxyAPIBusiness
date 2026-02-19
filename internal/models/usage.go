@@ -21,6 +21,10 @@ type Usage struct {
 	AuthKey   string `gorm:"type:text;index"` // Auth key value.
 	AuthIndex string `gorm:"type:text"`       // Auth index identifier.
 	Source    string `gorm:"type:text"`       // Usage source marker.
+	// VariantOrigin records the requested thinking strength from client input.
+	VariantOrigin string `gorm:"type:text"`
+	// Variant records the actual thinking strength sent upstream after adaptation.
+	Variant string `gorm:"type:text"`
 
 	RequestedAt time.Time `gorm:"not null;index"`         // Request timestamp.
 	Failed      bool      `gorm:"not null;default:false"` // Failure flag.

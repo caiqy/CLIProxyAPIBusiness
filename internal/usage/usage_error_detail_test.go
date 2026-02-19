@@ -66,3 +66,42 @@ func TestUsageErrorDetailCaptured(t *testing.T) {
 		t.Fatalf("expected message 'upstream failed'")
 	}
 }
+
+func TestUsageVariantFieldsCaptured(t *testing.T) {
+	conn, errOpen := db.Open(":memory:")
+	if errOpen != nil {
+		t.Fatalf("open db: %v", errOpen)
+	}
+	if errMigrate := db.Migrate(conn); errMigrate != nil {
+		t.Fatalf("migrate db: %v", errMigrate)
+	}
+
+	plugin := NewGormUsagePlugin(conn)
+	plugin.HandleUsage(context.Background(), coreusage.Record{
+		Provider:      "openai",
+		Model:         "gpt-4",
+		VariantOrigin: "xhigh",
+		Variant:       "high",
+		RequestedAt:   time.Now().UTC(),
+		Failed:        false,
+		Detail: coreusage.Detail{
+			InputTokens: 1,
+			TotalTokens: 1,
+		},
+	})
+
+	var row struct {
+		VariantOrigin string `gorm:"column:variant_origin"`
+		Variant       string `gorm:"column:variant"`
+	}
+	if errFind := conn.Table("usages").
+		Select("variant_origin, variant").
+		Order("id DESC").
+		Take(&row).Error; errFind != nil {
+		t.Fatalf("query variant fields: %v", errFind)
+	}
+
+	if row.VariantOrigin != "xhigh" || row.Variant != "high" {
+		t.Fatalf("expected variant_origin=xhigh and variant=high, got %q => %q", row.VariantOrigin, row.Variant)
+	}
+}

@@ -56,3 +56,20 @@ func TestMigrateSQLiteTokenHealthColumnsBackfillExistingAuthsTable(t *testing.T)
 		}
 	}
 }
+
+func TestMigrateSQLiteUsageVariantColumns(t *testing.T) {
+	conn, errOpen := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if errOpen != nil {
+		t.Fatalf("open sqlite: %v", errOpen)
+	}
+
+	if errMigrate := Migrate(conn); errMigrate != nil {
+		t.Fatalf("migrate: %v", errMigrate)
+	}
+
+	for _, column := range []string{"variant_origin", "variant"} {
+		if !conn.Migrator().HasColumn("usages", column) {
+			t.Fatalf("usages missing column %s", column)
+		}
+	}
+}

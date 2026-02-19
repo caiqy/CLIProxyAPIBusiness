@@ -96,6 +96,8 @@ func (p *GormUsagePlugin) HandleUsage(ctx context.Context, record coreusage.Reco
 	row := models.Usage{
 		Provider:        provider,
 		Model:           model,
+		VariantOrigin:   strings.TrimSpace(record.VariantOrigin),
+		Variant:         strings.TrimSpace(record.Variant),
 		UserID:          userID,
 		UserGroupID:     billingUserGroupID,
 		APIKeyID:        apiKeyID,

@@ -92,6 +92,18 @@ func migratePostgres(conn *gorm.DB) error {
 	`).Error; errUsageChargedTo != nil {
 		return fmt.Errorf("db: add usage charged_to: %w", errUsageChargedTo)
 	}
+	if errUsageVariantOrigin := conn.Exec(`
+		ALTER TABLE usages
+		ADD COLUMN IF NOT EXISTS variant_origin text
+	`).Error; errUsageVariantOrigin != nil {
+		return fmt.Errorf("db: add usage variant_origin: %w", errUsageVariantOrigin)
+	}
+	if errUsageVariant := conn.Exec(`
+		ALTER TABLE usages
+		ADD COLUMN IF NOT EXISTS variant text
+	`).Error; errUsageVariant != nil {
+		return fmt.Errorf("db: add usage variant: %w", errUsageVariant)
+	}
 	if errSeed := ensureDefaultGroups(conn); errSeed != nil {
 		return errSeed
 	}
@@ -914,6 +926,22 @@ func migrateSQLite(conn *gorm.DB) error {
 			ADD COLUMN charged_to text NOT NULL DEFAULT 'none'
 		`).Error; errUsageChargedTo != nil {
 			return fmt.Errorf("db: add usage charged_to: %w", errUsageChargedTo)
+		}
+	}
+	if migrator != nil && !migrator.HasColumn(&models.Usage{}, "variant_origin") {
+		if errUsageVariantOrigin := conn.Exec(`
+			ALTER TABLE usages
+			ADD COLUMN variant_origin text
+		`).Error; errUsageVariantOrigin != nil {
+			return fmt.Errorf("db: add usage variant_origin: %w", errUsageVariantOrigin)
+		}
+	}
+	if migrator != nil && !migrator.HasColumn(&models.Usage{}, "variant") {
+		if errUsageVariant := conn.Exec(`
+			ALTER TABLE usages
+			ADD COLUMN variant text
+		`).Error; errUsageVariant != nil {
+			return fmt.Errorf("db: add usage variant: %w", errUsageVariant)
 		}
 	}
 	if errSeed := ensureDefaultGroups(conn); errSeed != nil {

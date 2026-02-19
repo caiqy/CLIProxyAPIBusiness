@@ -281,6 +281,8 @@ type transactionItem struct {
 	Timestamp     string `json:"timestamp"`       // Local timestamp string.
 	Provider      string `json:"provider"`        // Provider credential display name.
 	Model         string `json:"model"`           // Model identifier.
+	VariantOrigin string `json:"variant_origin"`  // Requested thinking strength.
+	Variant       string `json:"variant"`         // Applied thinking strength.
 	RequestTimeMs int64  `json:"request_time_ms"` // Request duration in milliseconds.
 	InputTokens   int64  `json:"input_tokens"`    // Input token count.
 	CachedTokens  int64  `json:"cached_tokens"`   // Cached token count.
@@ -529,6 +531,8 @@ func (h *DashboardHandler) RecentTransactions(c *gin.Context) {
 			Timestamp:     u.RequestedAt.In(time.Local).Format("2006-01-02 15:04:05"),
 			Provider:      providerLabel,
 			Model:         u.Model,
+			VariantOrigin: strings.TrimSpace(u.VariantOrigin),
+			Variant:       strings.TrimSpace(u.Variant),
 			RequestTimeMs: requestTimeMs,
 			InputTokens:   u.InputTokens,
 			CachedTokens:  u.CachedTokens,
