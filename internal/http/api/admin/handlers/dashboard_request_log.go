@@ -51,6 +51,8 @@ func (h *DashboardHandler) GetTransactionRequestLog(c *gin.Context) {
 		return
 	}
 
+	attemptIndex := h.resolveUsageAttemptIndex(c, usage.ID, requestID)
+
 	filePath, fileName, errLogPath := findLatestTransactionRequestLogFile(resolveRequestLogsDir(), requestID)
 	if errLogPath != nil {
 		if errors.Is(errLogPath, errTransactionRequestLogNotFound) {
@@ -67,8 +69,8 @@ func (h *DashboardHandler) GetTransactionRequestLog(c *gin.Context) {
 		return
 	}
 
-	requestRaw, hasRequest := extractAPILogSection(string(rawContent), "=== API REQUEST")
-	responseRaw, hasResponse := extractAPILogSection(string(rawContent), "=== API RESPONSE")
+	requestRaw, hasRequest := extractAPILogSectionByAttempt(string(rawContent), "=== API REQUEST", attemptIndex)
+	responseRaw, hasResponse := extractAPILogSectionByAttempt(string(rawContent), "=== API RESPONSE", attemptIndex)
 	if !hasRequest && !hasResponse {
 		requestRaw = strings.TrimSpace(string(rawContent))
 		responseRaw = ""
@@ -80,6 +82,31 @@ func (h *DashboardHandler) GetTransactionRequestLog(c *gin.Context) {
 		APIResponseRaw: responseRaw,
 		SourceFile:     fileName,
 	})
+}
+
+func (h *DashboardHandler) resolveUsageAttemptIndex(c *gin.Context, usageID uint64, requestID string) int {
+	if h == nil || h.db == nil || usageID == 0 {
+		return 1
+	}
+
+	trimmedID := strings.TrimSpace(requestID)
+	if trimmedID == "" {
+		return 1
+	}
+
+	var count int64
+	errCount := h.db.WithContext(c.Request.Context()).
+		Model(&models.Usage{}).
+		Where("TRIM(request_id) = ? AND id <= ?", trimmedID, usageID).
+		Count(&count).Error
+	if errCount != nil || count <= 0 {
+		return 1
+	}
+
+	if count > int64(^uint(0)>>1) {
+		return int(^uint(0) >> 1)
+	}
+	return int(count)
 }
 
 func resolveRequestLogsDir() string {
@@ -132,28 +159,44 @@ func findLatestTransactionRequestLogFile(logsDir string, requestID string) (stri
 	return latestPath, latestName, nil
 }
 
-func extractAPILogSection(content string, sectionHeaderPrefix string) (string, bool) {
-	lines := strings.Split(content, "\n")
-	start := -1
-	for i := 0; i < len(lines); i++ {
-		line := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(line, sectionHeaderPrefix) && strings.HasSuffix(line, "===") {
-			start = i + 1
-			break
-		}
-	}
-	if start < 0 {
+func extractAPILogSectionByAttempt(content string, sectionHeaderPrefix string, attemptIndex int) (string, bool) {
+	sections := extractAPILogSections(content, sectionHeaderPrefix)
+	if len(sections) == 0 {
 		return "", false
 	}
+	if attemptIndex <= 0 {
+		attemptIndex = 1
+	}
+	idx := attemptIndex - 1
+	if idx >= 0 && idx < len(sections) {
+		return sections[idx], true
+	}
+	return sections[len(sections)-1], true
+}
 
-	end := len(lines)
-	for i := start; i < len(lines); i++ {
+func extractAPILogSections(content string, sectionHeaderPrefix string) []string {
+	lines := strings.Split(content, "\n")
+	sections := make([]string, 0, 2)
+
+	for i := 0; i < len(lines); i++ {
 		line := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(line, "===") && strings.HasSuffix(line, "===") {
-			end = i
-			break
+		if !strings.HasPrefix(line, sectionHeaderPrefix) || !strings.HasSuffix(line, "===") {
+			continue
 		}
+
+		start := i + 1
+		end := len(lines)
+		for j := start; j < len(lines); j++ {
+			nextLine := strings.TrimSpace(lines[j])
+			if strings.HasPrefix(nextLine, "===") && strings.HasSuffix(nextLine, "===") {
+				end = j
+				break
+			}
+		}
+
+		sections = append(sections, strings.TrimSpace(strings.Join(lines[start:end], "\n")))
+		i = end - 1
 	}
 
-	return strings.TrimSpace(strings.Join(lines[start:end], "\n")), true
+	return sections
 }

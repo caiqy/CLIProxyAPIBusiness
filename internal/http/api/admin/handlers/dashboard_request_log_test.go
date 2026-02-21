@@ -145,6 +145,76 @@ func TestTransactionRequestLogSuccessFromErrorLog(t *testing.T) {
 	}
 }
 
+func TestTransactionRequestLogSelectsAttemptByUsageOrder(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := openDashboardRequestLogTestDB(t)
+
+	usage1 := models.Usage{
+		Provider:    "openai",
+		Model:       "gpt-5.2",
+		RequestID:   "req-retry-1",
+		RequestedAt: time.Now().UTC(),
+		CreatedAt:   time.Now().UTC(),
+	}
+	if errCreate := db.Create(&usage1).Error; errCreate != nil {
+		t.Fatalf("create usage1: %v", errCreate)
+	}
+
+	usage2 := models.Usage{
+		Provider:    "openai",
+		Model:       "gpt-5.2",
+		RequestID:   "req-retry-1",
+		RequestedAt: time.Now().UTC(),
+		CreatedAt:   time.Now().UTC(),
+	}
+	if errCreate := db.Create(&usage2).Error; errCreate != nil {
+		t.Fatalf("create usage2: %v", errCreate)
+	}
+
+	baseDir := t.TempDir()
+	setWritablePathForTest(t, baseDir)
+	logsDir := filepath.Join(baseDir, "logs")
+	if errMkdir := os.MkdirAll(logsDir, 0o755); errMkdir != nil {
+		t.Fatalf("mkdir logs dir: %v", errMkdir)
+	}
+	logPath := filepath.Join(logsDir, "20260221-svc-req-retry-1.log")
+	content := strings.Join([]string{
+		"=== API REQUEST 1 ===",
+		"{\"attempt\":1,\"prompt\":\"hello\"}",
+		"",
+		"=== API REQUEST 2 ===",
+		"{\"attempt\":2,\"prompt\":\"hello\"}",
+		"",
+		"=== API RESPONSE 1 ===",
+		"{\"error\":\"first\"}",
+		"",
+		"=== API RESPONSE 2 ===",
+		"{\"error\":\"second\"}",
+		"",
+	}, "\n")
+	if errWrite := os.WriteFile(logPath, []byte(content), 0o644); errWrite != nil {
+		t.Fatalf("write log file: %v", errWrite)
+	}
+
+	h := NewDashboardHandler(db)
+
+	firstResp := callTransactionRequestLogHandler(t, h, usage1.ID)
+	if !strings.Contains(firstResp.APIRequestRaw, "\"attempt\":1") {
+		t.Fatalf("expected usage1 to map attempt 1 request, got %q", firstResp.APIRequestRaw)
+	}
+	if !strings.Contains(firstResp.APIResponseRaw, "\"first\"") {
+		t.Fatalf("expected usage1 to map attempt 1 response, got %q", firstResp.APIResponseRaw)
+	}
+
+	secondResp := callTransactionRequestLogHandler(t, h, usage2.ID)
+	if !strings.Contains(secondResp.APIRequestRaw, "\"attempt\":2") {
+		t.Fatalf("expected usage2 to map attempt 2 request, got %q", secondResp.APIRequestRaw)
+	}
+	if !strings.Contains(secondResp.APIResponseRaw, "\"second\"") {
+		t.Fatalf("expected usage2 to map attempt 2 response, got %q", secondResp.APIResponseRaw)
+	}
+}
+
 func TestTransactionRequestLogUsageWithoutRequestID(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db := openDashboardRequestLogTestDB(t)
@@ -299,4 +369,34 @@ func setWritablePathForTest(t *testing.T, dir string) {
 		}
 		_ = os.Unsetenv("WRITABLE_PATH")
 	})
+}
+
+func callTransactionRequestLogHandler(t *testing.T, h *DashboardHandler, usageID uint64) struct {
+	RequestID      string `json:"request_id"`
+	APIRequestRaw  string `json:"api_request_raw"`
+	APIResponseRaw string `json:"api_response_raw"`
+	SourceFile     string `json:"source_file"`
+} {
+	t.Helper()
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v0/admin/dashboard/transactions/1/request-log", nil)
+	c.Params = gin.Params{{Key: "id", Value: strconv.FormatUint(usageID, 10)}}
+
+	h.GetTransactionRequestLog(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		RequestID      string `json:"request_id"`
+		APIRequestRaw  string `json:"api_request_raw"`
+		APIResponseRaw string `json:"api_response_raw"`
+		SourceFile     string `json:"source_file"`
+	}
+	if errDecode := json.Unmarshal(w.Body.Bytes(), &resp); errDecode != nil {
+		t.Fatalf("decode response: %v", errDecode)
+	}
+	return resp
 }
