@@ -127,6 +127,7 @@ var definitions = []Definition{
 	newDefinition("GET", "/v0/admin/dashboard/cost-distribution", "View Cost Distribution", "Dashboard"),
 	newDefinition("GET", "/v0/admin/dashboard/model-health", "View Model Health", "Dashboard"),
 	newDefinition("GET", "/v0/admin/dashboard/transactions", "View Recent Transactions", "Dashboard"),
+	newDefinition("GET", "/v0/admin/dashboard/transactions/:id/request-log", "View Transaction Request Log", "Dashboard"),
 
 	newDefinition("POST", "/v0/admin/users", "Create User", "Users"),
 	newDefinition("GET", "/v0/admin/users", "List Users", "Users"),

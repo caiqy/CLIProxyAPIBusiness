@@ -228,6 +228,7 @@ func RegisterAdminRoutes(r *gin.Engine, db *gorm.DB, jwtCfg config.JWTConfig, co
 	authed.GET("/dashboard/cost-distribution", dashboardHandler.CostDistribution)
 	authed.GET("/dashboard/model-health", dashboardHandler.ModelHealth)
 	authed.GET("/dashboard/transactions", dashboardHandler.RecentTransactions)
+	authed.GET("/dashboard/transactions/:id/request-log", dashboardHandler.GetTransactionRequestLog)
 
 	if baseHandler != nil && baseHandler.AuthManager != nil {
 		tokenRequester := sdkapi.NewManagementTokenRequester(cfg, baseHandler.AuthManager)

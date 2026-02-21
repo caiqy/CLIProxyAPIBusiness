@@ -275,6 +275,8 @@ func (h *DashboardHandler) ModelHealth(c *gin.Context) {
 
 // transactionItem represents a recent usage record for the dashboard.
 type transactionItem struct {
+	ID            uint64 `json:"id"`              // Usage record ID.
+	RequestID     string `json:"request_id"`      // Tracing request ID.
 	Username      string `json:"username"`        // Caller username.
 	Status        string `json:"status"`          // HTTP-like status label.
 	StatusType    string `json:"status_type"`     // UI status type.
@@ -525,6 +527,8 @@ func (h *DashboardHandler) RecentTransactions(c *gin.Context) {
 		}
 
 		transactions = append(transactions, transactionItem{
+			ID:            u.ID,
+			RequestID:     strings.TrimSpace(u.RequestID),
 			Username:      username,
 			Status:        status,
 			StatusType:    statusType,

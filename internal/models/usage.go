@@ -20,6 +20,7 @@ type Usage struct {
 
 	AuthKey   string `gorm:"type:text;index"` // Auth key value.
 	AuthIndex string `gorm:"type:text"`       // Auth index identifier.
+	RequestID string `gorm:"type:text;index"` // Request ID for tracing.
 	Source    string `gorm:"type:text"`       // Usage source marker.
 	// VariantOrigin records the requested thinking strength from client input.
 	VariantOrigin string `gorm:"type:text"`

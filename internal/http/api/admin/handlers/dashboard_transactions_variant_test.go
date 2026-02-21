@@ -30,6 +30,7 @@ func TestAdminDashboardTransactionsReturnsVariantFields(t *testing.T) {
 	usage := models.Usage{
 		Provider:      "openai",
 		Model:         "gpt-5.2",
+		RequestID:     "  req-abc123  ",
 		VariantOrigin: "xhigh",
 		Variant:       "high",
 		UserID:        &user.ID,
@@ -53,6 +54,8 @@ func TestAdminDashboardTransactionsReturnsVariantFields(t *testing.T) {
 
 	var resp struct {
 		Transactions []struct {
+			ID            uint64 `json:"id"`
+			RequestID     string `json:"request_id"`
 			VariantOrigin string `json:"variant_origin"`
 			Variant       string `json:"variant"`
 		} `json:"transactions"`
@@ -62,6 +65,12 @@ func TestAdminDashboardTransactionsReturnsVariantFields(t *testing.T) {
 	}
 	if len(resp.Transactions) == 0 {
 		t.Fatalf("expected at least 1 transaction")
+	}
+	if resp.Transactions[0].ID == 0 {
+		t.Fatalf("expected id > 0, got %d", resp.Transactions[0].ID)
+	}
+	if resp.Transactions[0].RequestID != "req-abc123" {
+		t.Fatalf("expected request_id=req-abc123, got %q", resp.Transactions[0].RequestID)
 	}
 	if resp.Transactions[0].VariantOrigin != "xhigh" || resp.Transactions[0].Variant != "high" {
 		t.Fatalf("expected variant_origin=xhigh and variant=high, got %q => %q", resp.Transactions[0].VariantOrigin, resp.Transactions[0].Variant)

@@ -104,6 +104,12 @@ func migratePostgres(conn *gorm.DB) error {
 	`).Error; errUsageVariant != nil {
 		return fmt.Errorf("db: add usage variant: %w", errUsageVariant)
 	}
+	if errUsageRequestID := conn.Exec(`
+		ALTER TABLE usages
+		ADD COLUMN IF NOT EXISTS request_id text
+	`).Error; errUsageRequestID != nil {
+		return fmt.Errorf("db: add usage request_id: %w", errUsageRequestID)
+	}
 	if errSeed := ensureDefaultGroups(conn); errSeed != nil {
 		return errSeed
 	}
@@ -942,6 +948,14 @@ func migrateSQLite(conn *gorm.DB) error {
 			ADD COLUMN variant text
 		`).Error; errUsageVariant != nil {
 			return fmt.Errorf("db: add usage variant: %w", errUsageVariant)
+		}
+	}
+	if migrator != nil && !migrator.HasColumn(&models.Usage{}, "request_id") {
+		if errUsageRequestID := conn.Exec(`
+			ALTER TABLE usages
+			ADD COLUMN request_id text
+		`).Error; errUsageRequestID != nil {
+			return fmt.Errorf("db: add usage request_id: %w", errUsageRequestID)
 		}
 	}
 	if errSeed := ensureDefaultGroups(conn); errSeed != nil {

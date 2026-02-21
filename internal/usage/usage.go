@@ -13,6 +13,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/billing"
 	dbutil "github.com/router-for-me/CLIProxyAPIBusiness/internal/db"
+	"github.com/router-for-me/CLIProxyAPIBusiness/internal/logging"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/modelmapping"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/models"
 
@@ -104,6 +105,7 @@ func (p *GormUsagePlugin) HandleUsage(ctx context.Context, record coreusage.Reco
 		AuthID:          authID,
 		AuthKey:         authKey,
 		AuthIndex:       strings.TrimSpace(record.AuthIndex),
+		RequestID:       requestIDFromContext(ctx),
 		Source:          strings.TrimSpace(record.Source),
 		RequestedAt:     normalizeTime(record.RequestedAt),
 		Failed:          record.Failed,
@@ -150,6 +152,18 @@ func (p *GormUsagePlugin) HandleUsage(ctx context.Context, record coreusage.Reco
 	}); errTx != nil {
 		log.WithError(errTx).Warn("usage plugin: failed to persist usage or deduct balance")
 	}
+}
+
+func requestIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if ginCtx, ok := ctx.Value("gin").(*gin.Context); ok && ginCtx != nil {
+		if requestID := strings.TrimSpace(logging.GetGinRequestID(ginCtx)); requestID != "" {
+			return requestID
+		}
+	}
+	return strings.TrimSpace(logging.GetRequestID(ctx))
 }
 
 // resolveAuthRecordID looks up the auth record ID by key.
