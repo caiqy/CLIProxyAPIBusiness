@@ -19,6 +19,8 @@ type ProviderAPIKey struct {
 	ProxyURL  string `gorm:"type:text"`                       // Proxy URL override.
 	IsEnabled bool   `gorm:"not null;default:true;index"`     // Whether the key is enabled.
 
+	WhitelistEnabled bool `gorm:"not null;default:false"` // Whether models should be treated as allowlist.
+
 	Headers        datatypes.JSON `gorm:"type:jsonb"` // Extra request headers.
 	Models         datatypes.JSON `gorm:"type:jsonb"` // Allowed models list.
 	ExcludedModels datatypes.JSON `gorm:"type:jsonb"` // Excluded models list.

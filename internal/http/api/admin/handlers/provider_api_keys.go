@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"sort"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy"
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
 	dbutil "github.com/router-for-me/CLIProxyAPIBusiness/internal/db"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/models"
@@ -46,6 +48,8 @@ var providerAliases = map[string]string{
 	"openai-chat-completion-v1": providerOpenAI,
 }
 
+var providerUniverseLoader = loadProviderUniverse
+
 // ProviderAPIKeyHandler manages admin CRUD for provider API keys.
 type ProviderAPIKeyHandler struct {
 	db         *gorm.DB // Database handle for provider keys.
@@ -74,34 +78,36 @@ type apiKeyEntry struct {
 
 // createProviderAPIKeyRequest captures the payload for creating provider keys.
 type createProviderAPIKeyRequest struct {
-	Provider       string            `json:"provider"`        // Provider identifier.
-	Name           *string           `json:"name"`            // Optional provider name.
-	Priority       int               `json:"priority"`        // Selection priority (higher wins).
-	IsEnabled      *bool             `json:"is_enabled"`      // Optional enabled state.
-	APIKey         *string           `json:"api_key"`         // Optional API key.
-	Prefix         *string           `json:"prefix"`          // Optional prefix.
-	BaseURL        *string           `json:"base_url"`        // Optional base URL.
-	ProxyURL       *string           `json:"proxy_url"`       // Optional proxy URL.
-	Headers        map[string]string `json:"headers"`         // Request headers.
-	Models         []modelAlias      `json:"models"`          // Model aliases.
-	ExcludedModels []string          `json:"excluded_models"` // Excluded models.
-	APIKeyEntries  []apiKeyEntry     `json:"api_key_entries"` // API key entries.
+	Provider       string            `json:"provider"`          // Provider identifier.
+	Name           *string           `json:"name"`              // Optional provider name.
+	Priority       int               `json:"priority"`          // Selection priority (higher wins).
+	IsEnabled      *bool             `json:"is_enabled"`        // Optional enabled state.
+	Whitelist      *bool             `json:"whitelist_enabled"` // Optional whitelist mode for models.
+	APIKey         *string           `json:"api_key"`           // Optional API key.
+	Prefix         *string           `json:"prefix"`            // Optional prefix.
+	BaseURL        *string           `json:"base_url"`          // Optional base URL.
+	ProxyURL       *string           `json:"proxy_url"`         // Optional proxy URL.
+	Headers        map[string]string `json:"headers"`           // Request headers.
+	Models         []modelAlias      `json:"models"`            // Model aliases.
+	ExcludedModels []string          `json:"excluded_models"`   // Excluded models.
+	APIKeyEntries  []apiKeyEntry     `json:"api_key_entries"`   // API key entries.
 }
 
 // updateProviderAPIKeyRequest captures optional fields for updates.
 type updateProviderAPIKeyRequest struct {
-	Provider       *string            `json:"provider"`        // Optional provider.
-	Name           *string            `json:"name"`            // Optional provider name.
-	Priority       *int               `json:"priority"`        // Optional selection priority.
-	IsEnabled      *bool              `json:"is_enabled"`      // Optional enabled state.
-	APIKey         *string            `json:"api_key"`         // Optional API key.
-	Prefix         *string            `json:"prefix"`          // Optional prefix.
-	BaseURL        *string            `json:"base_url"`        // Optional base URL.
-	ProxyURL       *string            `json:"proxy_url"`       // Optional proxy URL.
-	Headers        *map[string]string `json:"headers"`         // Optional headers.
-	Models         *[]modelAlias      `json:"models"`          // Optional model aliases.
-	ExcludedModels *[]string          `json:"excluded_models"` // Optional excluded models.
-	APIKeyEntries  *[]apiKeyEntry     `json:"api_key_entries"` // Optional API key entries.
+	Provider       *string            `json:"provider"`          // Optional provider.
+	Name           *string            `json:"name"`              // Optional provider name.
+	Priority       *int               `json:"priority"`          // Optional selection priority.
+	IsEnabled      *bool              `json:"is_enabled"`        // Optional enabled state.
+	Whitelist      *bool              `json:"whitelist_enabled"` // Optional whitelist mode for models.
+	APIKey         *string            `json:"api_key"`           // Optional API key.
+	Prefix         *string            `json:"prefix"`            // Optional prefix.
+	BaseURL        *string            `json:"base_url"`          // Optional base URL.
+	ProxyURL       *string            `json:"proxy_url"`         // Optional proxy URL.
+	Headers        *map[string]string `json:"headers"`           // Optional headers.
+	Models         *[]modelAlias      `json:"models"`            // Optional model aliases.
+	ExcludedModels *[]string          `json:"excluded_models"`   // Optional excluded models.
+	APIKeyEntries  *[]apiKeyEntry     `json:"api_key_entries"`   // Optional API key entries.
 }
 
 // Create validates and inserts a provider API key record, then syncs config.
@@ -131,9 +137,11 @@ func (h *ProviderAPIKeyHandler) Create(c *gin.Context) {
 	}
 
 	now := time.Now().UTC()
+	whitelistEnabled := body.Whitelist != nil && *body.Whitelist
 	row := models.ProviderAPIKey{
-		Provider: provider,
-		Priority: body.Priority,
+		Provider:         provider,
+		Priority:         body.Priority,
+		WhitelistEnabled: whitelistEnabled,
 		IsEnabled: func() bool {
 			if body.IsEnabled == nil {
 				return true
@@ -148,18 +156,33 @@ func (h *ProviderAPIKeyHandler) Create(c *gin.Context) {
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
+	if errWhitelist := validateWhitelistSupport(row.Provider, row.WhitelistEnabled); errWhitelist != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": errWhitelist.Error()})
+		return
+	}
 
 	headersJSON, errHeaders := marshalJSON(body.Headers)
 	if errHeaders != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid headers"})
 		return
 	}
-	modelsJSON, errModels := marshalJSON(body.Models)
+	normalizedModels := normalizeModelAliases(body.Models)
+	excludedModels := normalizeModelNames(body.ExcludedModels)
+	if row.WhitelistEnabled {
+		computedExcluded, errWhitelist := buildExcludedFromCreateWhitelist(provider, normalizedModels)
+		if errWhitelist != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errWhitelist.Error()})
+			return
+		}
+		excludedModels = computedExcluded
+	}
+
+	modelsJSON, errModels := marshalJSON(normalizedModels)
 	if errModels != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid models"})
 		return
 	}
-	excludedJSON, errExcluded := marshalJSON(body.ExcludedModels)
+	excludedJSON, errExcluded := marshalJSON(excludedModels)
 	if errExcluded != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid excluded_models"})
 		return
@@ -369,6 +392,9 @@ func (h *ProviderAPIKeyHandler) Update(c *gin.Context) {
 	if body.IsEnabled != nil {
 		row.IsEnabled = *body.IsEnabled
 	}
+	if body.Whitelist != nil {
+		row.WhitelistEnabled = *body.Whitelist
+	}
 	if body.APIKey != nil {
 		row.APIKey = strings.TrimSpace(*body.APIKey)
 	}
@@ -389,8 +415,12 @@ func (h *ProviderAPIKeyHandler) Update(c *gin.Context) {
 		}
 		row.Headers = headersJSON
 	}
+	normalizedModels := decodeModels(row.Models)
+	excludedModels := decodeExcludedModels(row.ExcludedModels)
+
 	if body.Models != nil {
-		modelsJSON, errModels := marshalJSON(*body.Models)
+		normalizedModels = normalizeModelAliases(*body.Models)
+		modelsJSON, errModels := marshalJSON(normalizedModels)
 		if errModels != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid models"})
 			return
@@ -398,11 +428,36 @@ func (h *ProviderAPIKeyHandler) Update(c *gin.Context) {
 		row.Models = modelsJSON
 	}
 	if body.ExcludedModels != nil {
-		excludedJSON, errExcluded := marshalJSON(*body.ExcludedModels)
+		excludedModels = normalizeModelNames(*body.ExcludedModels)
+		excludedJSON, errExcluded := marshalJSON(excludedModels)
 		if errExcluded != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid excluded_models"})
 			return
 		}
+		row.ExcludedModels = excludedJSON
+	}
+	if errWhitelist := validateWhitelistSupport(row.Provider, row.WhitelistEnabled); errWhitelist != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": errWhitelist.Error()})
+		return
+	}
+	if row.WhitelistEnabled {
+		computedExcluded, errWhitelist := buildExcludedFromCreateWhitelist(normalizeProvider(row.Provider), normalizedModels)
+		if errWhitelist != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errWhitelist.Error()})
+			return
+		}
+		excludedModels = computedExcluded
+		modelsJSON, errModels := marshalJSON(normalizedModels)
+		if errModels != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid models"})
+			return
+		}
+		excludedJSON, errExcluded := marshalJSON(excludedModels)
+		if errExcluded != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid excluded_models"})
+			return
+		}
+		row.Models = modelsJSON
 		row.ExcludedModels = excludedJSON
 	}
 	if body.APIKeyEntries != nil {
@@ -691,6 +746,163 @@ func maskAPIKey(value string) string {
 	return string(runes[:4]) + "..." + string(runes[len(runes)-4:])
 }
 
+func buildExcludedFromWhitelist(universe []string, allowlist []string) ([]string, error) {
+	normalizedUniverse := normalizeModelNames(universe)
+	universeSet := make(map[string]struct{}, len(normalizedUniverse))
+	for _, model := range normalizedUniverse {
+		universeSet[strings.ToLower(model)] = struct{}{}
+	}
+
+	normalizedAllowlist := normalizeModelNames(allowlist)
+	for _, model := range normalizedAllowlist {
+		if _, ok := universeSet[strings.ToLower(model)]; !ok {
+			return nil, fmt.Errorf("unknown model: %s", model)
+		}
+	}
+
+	allowlistSet := make(map[string]struct{}, len(normalizedAllowlist))
+	for _, model := range normalizedAllowlist {
+		allowlistSet[strings.ToLower(model)] = struct{}{}
+	}
+
+	excluded := make([]string, 0, len(normalizedUniverse))
+	for _, model := range normalizedUniverse {
+		if _, ok := allowlistSet[strings.ToLower(model)]; ok {
+			continue
+		}
+		excluded = append(excluded, model)
+	}
+	return excluded, nil
+}
+
+func normalizeModelNames(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, raw := range values {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		key := strings.ToLower(trimmed)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, trimmed)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		li := strings.ToLower(out[i])
+		lj := strings.ToLower(out[j])
+		if li == lj {
+			return out[i] < out[j]
+		}
+		return li < lj
+	})
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func normalizeModelAliases(values []modelAlias) []modelAlias {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]modelAlias, 0, len(values))
+	for _, item := range values {
+		name := strings.TrimSpace(item.Name)
+		alias := strings.TrimSpace(item.Alias)
+		if name == "" && alias == "" {
+			continue
+		}
+		key := strings.ToLower(name) + "\x00" + strings.ToLower(alias)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, modelAlias{Name: name, Alias: alias})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func extractAllowlistModelNames(models []modelAlias) []string {
+	if len(models) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(models))
+	for _, item := range models {
+		name := strings.TrimSpace(item.Name)
+		if name == "" {
+			continue
+		}
+		names = append(names, name)
+	}
+	return normalizeModelNames(names)
+}
+
+func loadProviderUniverse(provider string) []string {
+	provider = normalizeProvider(provider)
+	if provider == "" {
+		return nil
+	}
+	lookupProvider := provider
+	if provider == providerOpenAI {
+		lookupProvider = "openai"
+	}
+	infos := cliproxy.GlobalModelRegistry().GetAvailableModelsByProvider(lookupProvider)
+	models := make([]string, 0, len(infos))
+	for _, info := range infos {
+		if info == nil {
+			continue
+		}
+		id := strings.TrimSpace(info.ID)
+		if id == "" {
+			continue
+		}
+		models = append(models, id)
+	}
+	return normalizeModelNames(models)
+}
+
+func buildExcludedFromCreateWhitelist(provider string, models []modelAlias) ([]string, error) {
+	universe := providerUniverseLoader(provider)
+	if len(universe) == 0 {
+		return nil, fmt.Errorf("provider models unavailable")
+	}
+	allowlist := extractAllowlistModelNames(models)
+	return buildExcludedFromWhitelist(universe, allowlist)
+}
+
+func supportsWhitelist(provider string) bool {
+	switch normalizeProvider(provider) {
+	case providerGemini, providerCodex, providerClaude:
+		return true
+	default:
+		return false
+	}
+}
+
+func validateWhitelistSupport(provider string, whitelistEnabled bool) error {
+	if !whitelistEnabled {
+		return nil
+	}
+	normalized := normalizeProvider(provider)
+	if supportsWhitelist(normalized) {
+		return nil
+	}
+	if normalized == "" {
+		return errors.New("invalid provider")
+	}
+	return fmt.Errorf("whitelist_enabled is not supported for provider %s", normalized)
+}
+
 // validateProviderRow enforces required fields per provider type.
 func validateProviderRow(row *models.ProviderAPIKey) error {
 	if row == nil {
@@ -848,20 +1060,21 @@ func formatProviderRow(row *models.ProviderAPIKey) gin.H {
 		return gin.H{}
 	}
 	return gin.H{
-		"id":              row.ID,
-		"provider":        row.Provider,
-		"name":            row.Name,
-		"is_enabled":      row.IsEnabled,
-		"priority":        row.Priority,
-		"api_key":         row.APIKey,
-		"prefix":          row.Prefix,
-		"base_url":        row.BaseURL,
-		"proxy_url":       row.ProxyURL,
-		"headers":         decodeHeaders(row.Headers),
-		"models":          decodeModels(row.Models),
-		"excluded_models": decodeExcludedModels(row.ExcludedModels),
-		"api_key_entries": decodeAPIKeyEntries(row.APIKeyEntries),
-		"created_at":      row.CreatedAt,
-		"updated_at":      row.UpdatedAt,
+		"id":                row.ID,
+		"provider":          row.Provider,
+		"name":              row.Name,
+		"is_enabled":        row.IsEnabled,
+		"priority":          row.Priority,
+		"api_key":           row.APIKey,
+		"prefix":            row.Prefix,
+		"base_url":          row.BaseURL,
+		"proxy_url":         row.ProxyURL,
+		"headers":           decodeHeaders(row.Headers),
+		"models":            decodeModels(row.Models),
+		"whitelist_enabled": row.WhitelistEnabled,
+		"excluded_models":   decodeExcludedModels(row.ExcludedModels),
+		"api_key_entries":   decodeAPIKeyEntries(row.APIKeyEntries),
+		"created_at":        row.CreatedAt,
+		"updated_at":        row.UpdatedAt,
 	}
 }
