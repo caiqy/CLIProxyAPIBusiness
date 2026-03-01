@@ -342,6 +342,34 @@ func TestAuthFiles_ModelPresets_ByType(t *testing.T) {
 	}
 }
 
+func TestAuthFiles_ModelPresets_Antigravity_StaticUniverse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db := setupAuthFilesWhitelistDB(t)
+	h := NewAuthFileHandler(db)
+	router := gin.New()
+	router.GET("/v0/admin/auth-files/model-presets", h.ListModelPresets)
+
+	req := httptest.NewRequest(http.MethodGet, "/v0/admin/auth-files/model-presets?type=antigravity", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Supported  bool     `json:"supported"`
+		ReasonCode string   `json:"reason_code"`
+		Models     []string `json:"models"`
+	}
+	if errDecode := json.Unmarshal(w.Body.Bytes(), &resp); errDecode != nil {
+		t.Fatalf("decode response failed: %v", errDecode)
+	}
+	if !resp.Supported || resp.ReasonCode != "" || len(resp.Models) == 0 {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+}
+
 func TestAuthFiles_ModelPresets_UnsupportedType(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

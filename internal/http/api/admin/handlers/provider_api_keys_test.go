@@ -486,6 +486,41 @@ func TestProviderAPIKeys_FormatProviderRow_IncludesWhitelistEnabled(t *testing.T
 	}
 }
 
+func TestLoadProviderUniverse_UsesStaticUniverse(t *testing.T) {
+	models := loadProviderUniverse("antigravity")
+	if len(models) == 0 {
+		t.Fatal("expected non-empty static universe for antigravity")
+	}
+	found := false
+	for _, model := range models {
+		if model == "gemini-2.5-flash" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected static model gemini-2.5-flash, got %v", models)
+	}
+}
+
+func TestLoadProviderUniverse_OpenAIAlias(t *testing.T) {
+	got := loadProviderUniverse("openai-compatibility")
+	if len(got) == 0 {
+		t.Fatal("expected non-empty static universe for openai alias")
+	}
+}
+
+func TestBuildExcludedFromCreateWhitelist_StaticUniverseAvailable(t *testing.T) {
+	models := []modelAlias{{Name: "claude-sonnet-4-6"}}
+	excluded, err := buildExcludedFromCreateWhitelist("claude", models)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(excluded) == 0 {
+		t.Fatal("expected excluded models computed from static universe")
+	}
+}
+
 func stubProviderUniverseLoader(t *testing.T, universeByProvider map[string][]string) {
 	t.Helper()
 	prev := providerUniverseLoader

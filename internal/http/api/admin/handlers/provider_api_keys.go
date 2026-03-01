@@ -852,22 +852,7 @@ func loadProviderUniverse(provider string) []string {
 	if provider == "" {
 		return nil
 	}
-	lookupProvider := provider
-	if provider == providerOpenAI {
-		lookupProvider = "openai"
-	}
-	infos := cliproxy.GlobalModelRegistry().GetAvailableModelsByProvider(lookupProvider)
-	models := make([]string, 0, len(infos))
-	for _, info := range infos {
-		if info == nil {
-			continue
-		}
-		id := strings.TrimSpace(info.ID)
-		if id == "" {
-			continue
-		}
-		models = append(models, id)
-	}
+	models := cliproxy.GetStaticProviderModelUniverse(provider)
 	return normalizeModelNames(models)
 }
 
