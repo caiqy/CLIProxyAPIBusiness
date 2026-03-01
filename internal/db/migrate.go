@@ -74,6 +74,9 @@ func migratePostgres(conn *gorm.DB) error {
 	if errTokenHealth := ensureAuthTokenHealthColumnsPostgres(conn); errTokenHealth != nil {
 		return errTokenHealth
 	}
+	if errWhitelist := ensureAuthModelWhitelistColumnsPostgres(conn); errWhitelist != nil {
+		return errWhitelist
+	}
 	if errUsageErrorStatus := conn.Exec(`
 		ALTER TABLE usages
 		ADD COLUMN IF NOT EXISTS error_status_code integer
@@ -901,6 +904,9 @@ func migrateSQLite(conn *gorm.DB) error {
 	migrator := conn.Migrator()
 	if errTokenHealth := ensureAuthTokenHealthColumnsSQLite(conn, migrator); errTokenHealth != nil {
 		return errTokenHealth
+	}
+	if errWhitelist := ensureAuthModelWhitelistColumnsSQLite(conn, migrator); errWhitelist != nil {
+		return errWhitelist
 	}
 	if migrator != nil && migrator.HasTable(&models.ModelReference{}) && !migrator.HasColumn(&models.ModelReference{}, "model_id") {
 		if errModelIDAdd := conn.Exec(`
@@ -1747,6 +1753,103 @@ func ensureAuthTokenHealthColumnsSQLite(conn *gorm.DB, migrator gorm.Migrator) e
 		`).Error; errAddError != nil {
 			return fmt.Errorf("db: add auth last_auth_error: %w", errAddError)
 		}
+	}
+	return nil
+}
+
+func ensureAuthModelWhitelistColumnsPostgres(conn *gorm.DB) error {
+	if conn == nil {
+		return fmt.Errorf("db: ensure auth whitelist columns: nil connection")
+	}
+	if errAddWhitelist := conn.Exec(`
+		ALTER TABLE auths
+		ADD COLUMN IF NOT EXISTS whitelist_enabled boolean NOT NULL DEFAULT false
+	`).Error; errAddWhitelist != nil {
+		return fmt.Errorf("db: add auth whitelist_enabled: %w", errAddWhitelist)
+	}
+	if errAddAllowed := conn.Exec(`
+		ALTER TABLE auths
+		ADD COLUMN IF NOT EXISTS allowed_models jsonb NOT NULL DEFAULT '[]'::jsonb
+	`).Error; errAddAllowed != nil {
+		return fmt.Errorf("db: add auth allowed_models: %w", errAddAllowed)
+	}
+	if errAddExcluded := conn.Exec(`
+		ALTER TABLE auths
+		ADD COLUMN IF NOT EXISTS excluded_models jsonb NOT NULL DEFAULT '[]'::jsonb
+	`).Error; errAddExcluded != nil {
+		return fmt.Errorf("db: add auth excluded_models: %w", errAddExcluded)
+	}
+	if errBackfill := conn.Exec(`
+		UPDATE auths
+		SET
+			whitelist_enabled = COALESCE(whitelist_enabled, false),
+			allowed_models = COALESCE(allowed_models, '[]'::jsonb),
+			excluded_models = COALESCE(excluded_models, '[]'::jsonb)
+		WHERE whitelist_enabled IS NULL
+			OR allowed_models IS NULL
+			OR excluded_models IS NULL
+	`).Error; errBackfill != nil {
+		return fmt.Errorf("db: backfill auth whitelist columns: %w", errBackfill)
+	}
+	if errConstraint := conn.Exec(`
+		ALTER TABLE auths
+		ALTER COLUMN whitelist_enabled SET DEFAULT false,
+		ALTER COLUMN whitelist_enabled SET NOT NULL,
+		ALTER COLUMN allowed_models SET DEFAULT '[]'::jsonb,
+		ALTER COLUMN allowed_models SET NOT NULL,
+		ALTER COLUMN excluded_models SET DEFAULT '[]'::jsonb,
+		ALTER COLUMN excluded_models SET NOT NULL
+	`).Error; errConstraint != nil {
+		return fmt.Errorf("db: enforce auth whitelist column constraints: %w", errConstraint)
+	}
+	return nil
+}
+
+func ensureAuthModelWhitelistColumnsSQLite(conn *gorm.DB, migrator gorm.Migrator) error {
+	if conn == nil {
+		return fmt.Errorf("db: ensure auth whitelist columns: nil connection")
+	}
+	if migrator == nil {
+		migrator = conn.Migrator()
+	}
+	if migrator == nil {
+		return fmt.Errorf("db: ensure auth whitelist columns: nil migrator")
+	}
+	if !migrator.HasColumn(&models.Auth{}, "whitelist_enabled") {
+		if errAddWhitelist := conn.Exec(`
+			ALTER TABLE auths
+			ADD COLUMN whitelist_enabled boolean NOT NULL DEFAULT false
+		`).Error; errAddWhitelist != nil {
+			return fmt.Errorf("db: add auth whitelist_enabled: %w", errAddWhitelist)
+		}
+	}
+	if !migrator.HasColumn(&models.Auth{}, "allowed_models") {
+		if errAddAllowed := conn.Exec(`
+			ALTER TABLE auths
+			ADD COLUMN allowed_models json NOT NULL DEFAULT '[]'
+		`).Error; errAddAllowed != nil {
+			return fmt.Errorf("db: add auth allowed_models: %w", errAddAllowed)
+		}
+	}
+	if !migrator.HasColumn(&models.Auth{}, "excluded_models") {
+		if errAddExcluded := conn.Exec(`
+			ALTER TABLE auths
+			ADD COLUMN excluded_models json NOT NULL DEFAULT '[]'
+		`).Error; errAddExcluded != nil {
+			return fmt.Errorf("db: add auth excluded_models: %w", errAddExcluded)
+		}
+	}
+	if errBackfill := conn.Exec(`
+		UPDATE auths
+		SET
+			whitelist_enabled = COALESCE(whitelist_enabled, false),
+			allowed_models = COALESCE(allowed_models, '[]'),
+			excluded_models = COALESCE(excluded_models, '[]')
+		WHERE whitelist_enabled IS NULL
+			OR allowed_models IS NULL
+			OR excluded_models IS NULL
+	`).Error; errBackfill != nil {
+		return fmt.Errorf("db: backfill auth whitelist columns: %w", errBackfill)
 	}
 	return nil
 }

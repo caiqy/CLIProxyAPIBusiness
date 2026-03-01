@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -535,7 +536,7 @@ func (w *dbWatcher) pollAuth(ctx context.Context, force bool) {
 
 	var rows []models.Auth
 	if errFind := w.db.WithContext(qctx).
-		Select("key", "content", "priority", "token_invalid", "created_at", "updated_at").
+		Select("key", "content", "priority", "token_invalid", "created_at", "updated_at", "excluded_models").
 		Where("is_available = ?", true).
 		Order("id ASC").
 		Find(&rows).Error; errFind != nil {
@@ -558,7 +559,7 @@ func (w *dbWatcher) pollAuth(ctx context.Context, force bool) {
 		hash := hashBytes(row.Content)
 		nextStates[key] = authState{hash: hash, updatedAt: row.UpdatedAt}
 
-		a := synthesizeAuthFromDBRow(w.authDir, key, row.Content, row.Priority, row.TokenInvalid, row.CreatedAt, row.UpdatedAt)
+		a := synthesizeAuthFromDBRow(w.authDir, key, row.Content, row.Priority, row.TokenInvalid, row.CreatedAt, row.UpdatedAt, decodeExcludedModelsJSON(row.ExcludedModels))
 		if a == nil || a.ID == "" {
 			continue
 		}
@@ -1172,7 +1173,7 @@ func encodeUpdate(enc *updateEncoder, update authUpdate) (reflect.Value, bool) {
 }
 
 // synthesizeAuthFromDBRow builds an auth entry from the stored JSON payload.
-func synthesizeAuthFromDBRow(authDir string, key string, payload []byte, priority int, tokenInvalid bool, createdAt, updatedAt time.Time) *coreauth.Auth {
+func synthesizeAuthFromDBRow(authDir string, key string, payload []byte, priority int, tokenInvalid bool, createdAt, updatedAt time.Time, excludedModels []string) *coreauth.Auth {
 	var metadata map[string]any
 	if errUnmarshal := json.Unmarshal(payload, &metadata); errUnmarshal != nil {
 		return nil
@@ -1218,6 +1219,9 @@ func synthesizeAuthFromDBRow(authDir string, key string, payload []byte, priorit
 	if priority != 0 {
 		attrs["priority"] = strconv.Itoa(priority)
 	}
+	if normalizedExcluded := normalizeExcludedModelNames(excludedModels); len(normalizedExcluded) > 0 {
+		attrs["excluded_models"] = strings.Join(normalizedExcluded, ",")
+	}
 
 	return &coreauth.Auth{
 		ID:         strings.TrimSpace(key),
@@ -1231,6 +1235,49 @@ func synthesizeAuthFromDBRow(authDir string, key string, payload []byte, priorit
 		CreatedAt:  createdAt.UTC(),
 		UpdatedAt:  updatedAt.UTC(),
 	}
+}
+
+func decodeExcludedModelsJSON(value datatypes.JSON) []string {
+	if len(value) == 0 {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal(value, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+func normalizeExcludedModelNames(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, item := range values {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		key := strings.ToLower(trimmed)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, trimmed)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Slice(out, func(i, j int) bool {
+		li := strings.ToLower(out[i])
+		lj := strings.ToLower(out[j])
+		if li == lj {
+			return out[i] < out[j]
+		}
+		return li < lj
+	})
+	return out
 }
 
 // safeJoinAuthPath joins baseDir and name while preventing path traversal.

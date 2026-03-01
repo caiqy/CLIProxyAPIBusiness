@@ -848,7 +848,7 @@ func extractAllowlistModelNames(models []modelAlias) []string {
 }
 
 func loadProviderUniverse(provider string) []string {
-	provider = normalizeProvider(provider)
+	provider = strings.ToLower(strings.TrimSpace(provider))
 	if provider == "" {
 		return nil
 	}

@@ -40,6 +40,8 @@ type createAuthFileRequest struct {
 	IsAvailable *bool               `json:"is_available"`
 	RateLimit   int                 `json:"rate_limit"`
 	Priority    int                 `json:"priority"`
+	Whitelist   *bool               `json:"whitelist_enabled"`
+	Allowed     []string            `json:"allowed_models"`
 }
 
 type importAuthFilesFailure struct {
@@ -103,6 +105,23 @@ func (h *AuthFileHandler) Create(c *gin.Context) {
 			contentJSON = datatypes.JSON(contentBytes)
 		}
 	}
+	whitelistEnabled := body.Whitelist != nil && *body.Whitelist
+	allowedModels, excludedModels, errWhitelist := computeAuthFileWhitelistFields(body.Content, whitelistEnabled, body.Allowed)
+	if errWhitelist != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": errWhitelist.Error()})
+		return
+	}
+
+	allowedModelsJSON, errAllowed := marshalStringSliceJSON(allowedModels)
+	if errAllowed != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid allowed_models"})
+		return
+	}
+	excludedModelsJSON, errExcludedJSON := marshalStringSliceJSON(excludedModels)
+	if errExcludedJSON != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid excluded_models"})
+		return
+	}
 
 	now := time.Now().UTC()
 	authGroupIDs := body.AuthGroupID.Clean()
@@ -119,16 +138,19 @@ func (h *AuthFileHandler) Create(c *gin.Context) {
 		}
 	}
 	auth := models.Auth{
-		Key:         key,
-		Name:        name,
-		AuthGroupID: authGroupIDs,
-		ProxyURL:    proxyURL,
-		Content:     contentJSON,
-		IsAvailable: isAvailable,
-		RateLimit:   body.RateLimit,
-		Priority:    body.Priority,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		Key:              key,
+		Name:             name,
+		AuthGroupID:      authGroupIDs,
+		ProxyURL:         proxyURL,
+		Content:          contentJSON,
+		WhitelistEnabled: whitelistEnabled,
+		AllowedModels:    allowedModelsJSON,
+		ExcludedModels:   excludedModelsJSON,
+		IsAvailable:      isAvailable,
+		RateLimit:        body.RateLimit,
+		Priority:         body.Priority,
+		CreatedAt:        now,
+		UpdatedAt:        now,
 	}
 
 	if errCreate := h.db.WithContext(c.Request.Context()).Create(&auth).Error; errCreate != nil {
@@ -141,17 +163,20 @@ func (h *AuthFileHandler) Create(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"id":            auth.ID,
-		"key":           auth.Key,
-		"name":          auth.Name,
-		"auth_group_id": auth.AuthGroupID.Clean(),
-		"proxy_url":     auth.ProxyURL,
-		"content":       auth.Content,
-		"is_available":  auth.IsAvailable,
-		"rate_limit":    auth.RateLimit,
-		"priority":      auth.Priority,
-		"created_at":    auth.CreatedAt,
-		"updated_at":    auth.UpdatedAt,
+		"id":                auth.ID,
+		"key":               auth.Key,
+		"name":              auth.Name,
+		"auth_group_id":     auth.AuthGroupID.Clean(),
+		"proxy_url":         auth.ProxyURL,
+		"content":           auth.Content,
+		"whitelist_enabled": auth.WhitelistEnabled,
+		"allowed_models":    decodeExcludedModels(auth.AllowedModels),
+		"excluded_models":   decodeExcludedModels(auth.ExcludedModels),
+		"is_available":      auth.IsAvailable,
+		"rate_limit":        auth.RateLimit,
+		"priority":          auth.Priority,
+		"created_at":        auth.CreatedAt,
+		"updated_at":        auth.UpdatedAt,
 	})
 }
 
@@ -311,14 +336,55 @@ func (h *AuthFileHandler) Import(c *gin.Context) {
 			UpdatedAt:   now,
 		}
 
+		updateFields := map[string]any{
+			"auth_group_id": auth.AuthGroupID,
+			"proxy_url":     auth.ProxyURL,
+			"content":       auth.Content,
+			"updated_at":    now,
+		}
+
+		var existing models.Auth
+		errFindExisting := h.db.WithContext(c.Request.Context()).Where("key = ?", key).First(&existing).Error
+		if errFindExisting != nil && !errors.Is(errFindExisting, gorm.ErrRecordNotFound) {
+			failures = append(failures, importAuthFilesFailure{
+				File:  file.Filename,
+				Error: "import auth file failed",
+			})
+			continue
+		}
+		if errFindExisting == nil {
+			whitelistEnabled, allowedModels, excludedModels, errReconcile := reconcileWhitelistOnImportConflict(existing, payload)
+			if errReconcile != nil {
+				failures = append(failures, importAuthFilesFailure{
+					File:  file.Filename,
+					Error: "import auth file failed",
+				})
+				continue
+			}
+			allowedModelsJSON, errAllowed := marshalStringSliceJSON(allowedModels)
+			if errAllowed != nil {
+				failures = append(failures, importAuthFilesFailure{
+					File:  file.Filename,
+					Error: "import auth file failed",
+				})
+				continue
+			}
+			excludedModelsJSON, errExcluded := marshalStringSliceJSON(excludedModels)
+			if errExcluded != nil {
+				failures = append(failures, importAuthFilesFailure{
+					File:  file.Filename,
+					Error: "import auth file failed",
+				})
+				continue
+			}
+			updateFields["whitelist_enabled"] = whitelistEnabled
+			updateFields["allowed_models"] = allowedModelsJSON
+			updateFields["excluded_models"] = excludedModelsJSON
+		}
+
 		errCreate := h.db.WithContext(c.Request.Context()).Clauses(clause.OnConflict{
-			Columns: []clause.Column{{Name: "key"}},
-			DoUpdates: clause.Assignments(map[string]any{
-				"auth_group_id": auth.AuthGroupID,
-				"proxy_url":     auth.ProxyURL,
-				"content":       auth.Content,
-				"updated_at":    now,
-			}),
+			Columns:   []clause.Column{{Name: "key"}},
+			DoUpdates: clause.Assignments(updateFields),
 		}).Create(&auth).Error
 		if errCreate != nil {
 			failures = append(failures, importAuthFilesFailure{
@@ -379,17 +445,20 @@ func (h *AuthFileHandler) List(c *gin.Context) {
 	for _, row := range rows {
 		authGroupIDs := row.AuthGroupID.Clean()
 		item := gin.H{
-			"id":            row.ID,
-			"key":           row.Key,
-			"name":          row.Name,
-			"auth_group_id": authGroupIDs,
-			"proxy_url":     row.ProxyURL,
-			"content":       row.Content,
-			"is_available":  row.IsAvailable,
-			"rate_limit":    row.RateLimit,
-			"priority":      row.Priority,
-			"created_at":    row.CreatedAt,
-			"updated_at":    row.UpdatedAt,
+			"id":                row.ID,
+			"key":               row.Key,
+			"name":              row.Name,
+			"auth_group_id":     authGroupIDs,
+			"proxy_url":         row.ProxyURL,
+			"content":           row.Content,
+			"whitelist_enabled": row.WhitelistEnabled,
+			"allowed_models":    decodeExcludedModels(row.AllowedModels),
+			"excluded_models":   decodeExcludedModels(row.ExcludedModels),
+			"is_available":      row.IsAvailable,
+			"rate_limit":        row.RateLimit,
+			"priority":          row.Priority,
+			"created_at":        row.CreatedAt,
+			"updated_at":        row.UpdatedAt,
 		}
 		item["auth_group"] = buildAuthGroupSummaries(authGroupIDs, groupMap)
 		out = append(out, item)
@@ -422,17 +491,20 @@ func (h *AuthFileHandler) Get(c *gin.Context) {
 		return
 	}
 	item := gin.H{
-		"id":            auth.ID,
-		"key":           auth.Key,
-		"name":          auth.Name,
-		"auth_group_id": authGroupIDs,
-		"proxy_url":     auth.ProxyURL,
-		"content":       auth.Content,
-		"is_available":  auth.IsAvailable,
-		"rate_limit":    auth.RateLimit,
-		"priority":      auth.Priority,
-		"created_at":    auth.CreatedAt,
-		"updated_at":    auth.UpdatedAt,
+		"id":                auth.ID,
+		"key":               auth.Key,
+		"name":              auth.Name,
+		"auth_group_id":     authGroupIDs,
+		"proxy_url":         auth.ProxyURL,
+		"content":           auth.Content,
+		"whitelist_enabled": auth.WhitelistEnabled,
+		"allowed_models":    decodeExcludedModels(auth.AllowedModels),
+		"excluded_models":   decodeExcludedModels(auth.ExcludedModels),
+		"is_available":      auth.IsAvailable,
+		"rate_limit":        auth.RateLimit,
+		"priority":          auth.Priority,
+		"created_at":        auth.CreatedAt,
+		"updated_at":        auth.UpdatedAt,
 	}
 	item["auth_group"] = buildAuthGroupSummaries(authGroupIDs, groupMap)
 	c.JSON(http.StatusOK, item)
@@ -448,6 +520,8 @@ type updateAuthFileRequest struct {
 	IsAvailable *bool                `json:"is_available"`
 	RateLimit   *int                 `json:"rate_limit"`
 	Priority    *int                 `json:"priority"`
+	Whitelist   *bool                `json:"whitelist_enabled"`
+	Allowed     *[]string            `json:"allowed_models"`
 }
 
 // Update modifies an auth file entry.
@@ -465,6 +539,16 @@ func (h *AuthFileHandler) Update(c *gin.Context) {
 	}
 
 	now := time.Now().UTC()
+	var current models.Auth
+	if errFind := h.db.WithContext(c.Request.Context()).First(&current, id).Error; errFind != nil {
+		if errors.Is(errFind, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "query failed"})
+		return
+	}
+
 	updates := map[string]any{"updated_at": now}
 	if body.Name != nil {
 		trimmed := strings.TrimSpace(*body.Name)
@@ -494,6 +578,39 @@ func (h *AuthFileHandler) Update(c *gin.Context) {
 			updates["content"] = datatypes.JSON(contentBytes)
 		}
 	}
+	shouldProcessWhitelist := body.Whitelist != nil || body.Allowed != nil || (body.Content != nil && current.WhitelistEnabled)
+	if shouldProcessWhitelist {
+		contentMap := parseAuthContentMap(current.Content)
+		if body.Content != nil {
+			contentMap = body.Content
+		}
+		whitelistEnabled := current.WhitelistEnabled
+		if body.Whitelist != nil {
+			whitelistEnabled = *body.Whitelist
+		}
+		allowedModels := normalizeModelNames(decodeExcludedModels(current.AllowedModels))
+		if body.Allowed != nil {
+			allowedModels = normalizeModelNames(*body.Allowed)
+		}
+		allowedModels, excludedModels, errWhitelist := computeAuthFileWhitelistFields(contentMap, whitelistEnabled, allowedModels)
+		if errWhitelist != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errWhitelist.Error()})
+			return
+		}
+		allowedModelsJSON, errAllowed := marshalStringSliceJSON(allowedModels)
+		if errAllowed != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid allowed_models"})
+			return
+		}
+		excludedModelsJSON, errExcludedJSON := marshalStringSliceJSON(excludedModels)
+		if errExcludedJSON != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid excluded_models"})
+			return
+		}
+		updates["whitelist_enabled"] = whitelistEnabled
+		updates["allowed_models"] = allowedModelsJSON
+		updates["excluded_models"] = excludedModelsJSON
+	}
 	if body.IsAvailable != nil {
 		updates["is_available"] = *body.IsAvailable
 	}
@@ -514,6 +631,144 @@ func (h *AuthFileHandler) Update(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func parseAuthContentMap(content datatypes.JSON) map[string]any {
+	if len(content) == 0 {
+		return map[string]any{}
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(content, &parsed); err != nil || parsed == nil {
+		return map[string]any{}
+	}
+	return parsed
+}
+
+func resolveAuthFileProviderFromContent(content map[string]any) (string, error) {
+	if content == nil {
+		return "", errors.New("invalid auth type")
+	}
+	rawType := ""
+	if v, ok := content["type"].(string); ok {
+		rawType = strings.TrimSpace(v)
+	}
+	if rawType == "" {
+		if v, ok := content["provider"].(string); ok {
+			rawType = strings.TrimSpace(v)
+		}
+	}
+	if rawType == "" {
+		return "", errors.New("invalid auth type")
+	}
+	provider, errProvider := canonicalizeImportProvider(rawType)
+	if errProvider != nil {
+		return "", errors.New("invalid auth type")
+	}
+	return provider, nil
+}
+
+func buildExcludedFromAuthFileWhitelist(provider string, allowedModels []string) ([]string, error) {
+	canonicalProvider := strings.ToLower(strings.TrimSpace(provider))
+	if canonical, errCanonical := canonicalizeImportProvider(provider); errCanonical == nil {
+		canonicalProvider = canonical
+	}
+	if !supportsAuthFileWhitelistProvider(canonicalProvider) {
+		return nil, fmt.Errorf("whitelist not supported for provider %s", canonicalProvider)
+	}
+	universe := providerUniverseLoader(canonicalProvider)
+	if len(universe) == 0 {
+		return nil, fmt.Errorf("provider models unavailable for %s", canonicalProvider)
+	}
+	return buildExcludedFromWhitelist(universe, allowedModels)
+}
+
+func supportsAuthFileWhitelistProvider(provider string) bool {
+	canonicalProvider := strings.ToLower(strings.TrimSpace(provider))
+	if canonical, errCanonical := canonicalizeImportProvider(provider); errCanonical == nil {
+		canonicalProvider = canonical
+	}
+	switch canonicalProvider {
+	case providerGemini, providerCodex, providerClaude, "antigravity", "qwen", "kiro", "kimi", "github-copilot", "kilo", "iflow":
+		return true
+	default:
+		return false
+	}
+}
+
+func computeAuthFileWhitelistFields(content map[string]any, whitelistEnabled bool, allowed []string) ([]string, []string, error) {
+	if !whitelistEnabled {
+		return []string{}, []string{}, nil
+	}
+	provider, errProvider := resolveAuthFileProviderFromContent(content)
+	if errProvider != nil {
+		return nil, nil, errProvider
+	}
+	allowedModels := normalizeModelNames(allowed)
+	excludedModels, errExcluded := buildExcludedFromAuthFileWhitelist(provider, allowedModels)
+	if errExcluded != nil {
+		return nil, nil, errExcluded
+	}
+	return allowedModels, excludedModels, nil
+}
+
+func reconcileWhitelistOnImportConflict(current models.Auth, newContent map[string]any) (bool, []string, []string, error) {
+	if !current.WhitelistEnabled {
+		return false, []string{}, []string{}, nil
+	}
+
+	provider, errProvider := resolveAuthFileProviderFromContent(newContent)
+	if errProvider != nil {
+		return false, nil, nil, errProvider
+	}
+	if !supportsAuthFileWhitelistProvider(provider) {
+		return false, nil, nil, fmt.Errorf("whitelist not supported for provider %s", provider)
+	}
+
+	universe := normalizeModelNames(providerUniverseLoader(provider))
+	if len(universe) == 0 {
+		return false, nil, nil, fmt.Errorf("provider models unavailable for %s", provider)
+	}
+
+	oldAllowed := normalizeModelNames(decodeExcludedModels(current.AllowedModels))
+	if len(oldAllowed) == 0 {
+		return true, []string{}, universe, nil
+	}
+
+	universeSet := make(map[string]struct{}, len(universe))
+	for _, model := range universe {
+		universeSet[strings.ToLower(model)] = struct{}{}
+	}
+
+	intersection := make([]string, 0, len(oldAllowed))
+	for _, model := range oldAllowed {
+		if _, ok := universeSet[strings.ToLower(model)]; !ok {
+			continue
+		}
+		intersection = append(intersection, model)
+	}
+	intersection = normalizeModelNames(intersection)
+	if len(intersection) == 0 {
+		return true, []string{}, universe, nil
+	}
+
+	excludedModels, errExcluded := buildExcludedFromWhitelist(universe, intersection)
+	if errExcluded != nil {
+		return false, nil, nil, errExcluded
+	}
+
+	return true, intersection, excludedModels, nil
+}
+
+func marshalStringSliceJSON(values []string) (datatypes.JSON, error) {
+	normalized := normalizeModelNames(values)
+	if len(normalized) == 0 {
+		return datatypes.JSON([]byte("[]")), nil
+	}
+	data, err := json.Marshal(normalized)
+	if err != nil {
+		return nil, err
+	}
+	return datatypes.JSON(data), nil
 }
 
 // Delete removes an auth file entry.
@@ -594,6 +849,58 @@ func (h *AuthFileHandler) ListTypes(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"types": types})
+}
+
+// ListModelPresets returns preset models for a given auth file type.
+func (h *AuthFileHandler) ListModelPresets(c *gin.Context) {
+	typeKey := strings.TrimSpace(c.Query("type"))
+	if typeKey == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"supported":   false,
+			"reason":      "auth type is required",
+			"reason_code": "auth_type_required",
+			"models":      []string{},
+		})
+		return
+	}
+	provider, errProvider := canonicalizeImportProvider(typeKey)
+	if errProvider != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"supported":   false,
+			"reason":      "unsupported auth type",
+			"reason_code": "unsupported_auth_type",
+			"models":      []string{},
+		})
+		return
+	}
+	if !supportsAuthFileWhitelistProvider(provider) {
+		c.JSON(http.StatusOK, gin.H{
+			"provider":    provider,
+			"supported":   false,
+			"reason":      fmt.Sprintf("whitelist not supported for provider %s", provider),
+			"reason_code": "whitelist_not_supported",
+			"models":      []string{},
+		})
+		return
+	}
+	models := normalizeModelNames(providerUniverseLoader(provider))
+	if len(models) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"provider":    provider,
+			"supported":   false,
+			"reason":      fmt.Sprintf("provider models unavailable for %s", provider),
+			"reason_code": "provider_models_unavailable",
+			"models":      []string{},
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"provider":    provider,
+		"supported":   true,
+		"reason":      "",
+		"reason_code": "",
+		"models":      models,
+	})
 }
 
 func parseAuthGroupIDsInput(value string) (models.AuthGroupIDs, error) {

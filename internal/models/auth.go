@@ -168,6 +168,10 @@ type Auth struct {
 
 	Content datatypes.JSON `gorm:"type:jsonb;not null"` // Auth payload content.
 
+	WhitelistEnabled bool           `gorm:"type:boolean;not null;default:false"` // Whether whitelist mode is enabled.
+	AllowedModels    datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'"`    // Allowed model names when whitelist is enabled.
+	ExcludedModels   datatypes.JSON `gorm:"type:jsonb;not null;default:'[]'"`    // Derived excluded model names.
+
 	IsAvailable     bool       `gorm:"type:boolean;not null;default:true"`  // Availability flag.
 	RateLimit       int        `gorm:"not null;default:0"`                  // Rate limit per second.
 	Priority        int        `gorm:"not null;default:0;index"`            // Selection priority (higher wins).

@@ -118,6 +118,7 @@ func RegisterAdminRoutes(r *gin.Engine, db *gorm.DB, jwtCfg config.JWTConfig, co
 	authed.POST("/auth-files/:id/available", authFileHandler.SetAvailable)
 	authed.POST("/auth-files/:id/unavailable", authFileHandler.SetUnavailable)
 	authed.GET("/auth-files/types", authFileHandler.ListTypes)
+	authed.GET("/auth-files/model-presets", authFileHandler.ListModelPresets)
 
 	var quotaRefresher interface {
 		RefreshByAuthKey(ctx context.Context, authKey string) error

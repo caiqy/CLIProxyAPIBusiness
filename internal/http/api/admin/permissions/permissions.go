@@ -162,6 +162,7 @@ var definitions = []Definition{
 	newDefinition("POST", "/v0/admin/auth-files/:id/available", "Set Auth File Available", "Auth Files"),
 	newDefinition("POST", "/v0/admin/auth-files/:id/unavailable", "Set Auth File Unavailable", "Auth Files"),
 	newDefinition("GET", "/v0/admin/auth-files/types", "List Auth File Types", "Auth Files"),
+	newDefinition("GET", "/v0/admin/auth-files/model-presets", "List Auth File Model Presets", "Auth Files"),
 
 	newDefinition("GET", "/v0/admin/quotas", "List Quotas", "Quota"),
 	newDefinition("POST", "/v0/admin/quotas/manual-refresh", "Trigger Quota Manual Refresh", "Quota"),

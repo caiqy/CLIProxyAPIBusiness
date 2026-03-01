@@ -25,7 +25,7 @@ func setupAuthFileProviderImportDB(t *testing.T) *gorm.DB {
 	if errMigrate := db.AutoMigrate(&models.AuthGroup{}, &models.Auth{}); errMigrate != nil {
 		t.Fatalf("migrate db: %v", errMigrate)
 	}
-	defaultGroup := models.AuthGroup{Name: "default-group", IsDefault: true}
+	defaultGroup := models.AuthGroup{Name: fmt.Sprintf("default-group-%d", time.Now().UnixNano()), IsDefault: true}
 	if errCreate := db.Create(&defaultGroup).Error; errCreate != nil {
 		t.Fatalf("create default auth group: %v", errCreate)
 	}
