@@ -113,7 +113,10 @@ func (s *GormAuthStore) List(ctx context.Context) ([]*cliproxyauth.Auth, error) 
 	}
 
 	var rows []models.Auth
-	if errFind := s.db.WithContext(ctx).Order("id ASC").Find(&rows).Error; errFind != nil {
+	if errFind := s.db.WithContext(ctx).
+		Where("is_available = ?", true).
+		Order("id ASC").
+		Find(&rows).Error; errFind != nil {
 		return nil, fmt.Errorf("gorm auth store: list: %w", errFind)
 	}
 
