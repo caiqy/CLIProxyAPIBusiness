@@ -43,6 +43,7 @@ type quotaListQuery struct {
 type quotaListRow struct {
 	ID              uint64         `gorm:"column:id"`
 	AuthID          uint64         `gorm:"column:auth_id"`
+	AuthName        string         `gorm:"column:auth_name"`
 	Type            string         `gorm:"column:type"`
 	Data            datatypes.JSON `gorm:"column:data"`
 	UpdatedAt       time.Time      `gorm:"column:updated_at"`
@@ -87,7 +88,9 @@ func (h *QuotaHandler) List(c *gin.Context) {
 		Joins("JOIN auths ON auths.id = quota.auth_id")
 	if keyQ != "" {
 		pattern := dbutil.NormalizeLikePattern(h.db, "%"+keyQ+"%")
-		base = base.Where(dbutil.CaseInsensitiveLikeExpr(h.db, "auths.key"), pattern)
+		keyExpr := dbutil.CaseInsensitiveLikeExpr(h.db, "auths.key")
+		nameExpr := dbutil.CaseInsensitiveLikeExpr(h.db, "auths.name")
+		base = base.Where("("+keyExpr+" OR "+nameExpr+")", pattern, pattern)
 	}
 	if typeQ != "" {
 		base = base.Where("quota.type = ?", typeQ)
@@ -107,7 +110,9 @@ func (h *QuotaHandler) List(c *gin.Context) {
 		Joins("JOIN auths ON auths.id = quota.auth_id")
 	if keyQ != "" {
 		pattern := dbutil.NormalizeLikePattern(h.db, "%"+keyQ+"%")
-		typeQuery = typeQuery.Where(dbutil.CaseInsensitiveLikeExpr(h.db, "auths.key"), pattern)
+		keyExpr := dbutil.CaseInsensitiveLikeExpr(h.db, "auths.key")
+		nameExpr := dbutil.CaseInsensitiveLikeExpr(h.db, "auths.name")
+		typeQuery = typeQuery.Where("("+keyExpr+" OR "+nameExpr+")", pattern, pattern)
 	}
 	if groupID > 0 {
 		typeQuery = typeQuery.Where(dbutil.JSONArrayContainsExpr(h.db, "auths.auth_group_id"), dbutil.JSONArrayContainsValue(h.db, groupID))
@@ -121,7 +126,7 @@ func (h *QuotaHandler) List(c *gin.Context) {
 	offset := (q.Page - 1) * q.Limit
 	var rows []quotaListRow
 	if errFind := base.
-		Select("quota.id, quota.auth_id, quota.type, quota.data, quota.updated_at, auths.key AS auth_key, auths.is_available AS is_available, auths.token_invalid AS token_invalid, CAST(auths.last_auth_check_at AS TEXT) AS last_auth_check_at, auths.last_auth_error AS last_auth_error").
+		Select("quota.id, quota.auth_id, auths.name AS auth_name, quota.type, quota.data, quota.updated_at, auths.key AS auth_key, auths.is_available AS is_available, auths.token_invalid AS token_invalid, CAST(auths.last_auth_check_at AS TEXT) AS last_auth_check_at, auths.last_auth_error AS last_auth_error").
 		Order("auths.id ASC, quota.updated_at DESC").
 		Offset(offset).
 		Limit(q.Limit).
@@ -140,6 +145,7 @@ func (h *QuotaHandler) List(c *gin.Context) {
 		out = append(out, gin.H{
 			"id":                 row.ID,
 			"auth_id":            row.AuthID,
+			"auth_name":          row.AuthName,
 			"auth_key":           row.AuthKey,
 			"type":               row.Type,
 			"data":               payload,

@@ -123,7 +123,9 @@ func (h *QuotaHandler) listManualRefreshAuthKeys(ctx context.Context, req quotaM
 		Where("auths.is_available")
 	if key != "" {
 		pattern := dbutil.NormalizeLikePattern(h.db, "%"+key+"%")
-		query = query.Where(dbutil.CaseInsensitiveLikeExpr(h.db, "auths.key"), pattern)
+		keyExpr := dbutil.CaseInsensitiveLikeExpr(h.db, "auths.key")
+		nameExpr := dbutil.CaseInsensitiveLikeExpr(h.db, "auths.name")
+		query = query.Where("("+keyExpr+" OR "+nameExpr+")", pattern, pattern)
 	}
 	if typ != "" {
 		query = query.Where("quota.type = ?", typ)

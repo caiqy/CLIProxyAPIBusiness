@@ -425,3 +425,44 @@ func TestManualRefreshSkipsDisabledAuths(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestManualRefreshKeyFilterSupportsAuthName(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupQuotaManualRefreshDB(t)
+
+	matched := models.Auth{
+		Key:         "auth-key-001",
+		Name:        "Primary Billing",
+		IsAvailable: true,
+		Content:     datatypes.JSON([]byte(`{"type":"antigravity"}`)),
+	}
+	if errCreate := db.Create(&matched).Error; errCreate != nil {
+		t.Fatalf("create matched auth: %v", errCreate)
+	}
+	other := models.Auth{
+		Key:         "auth-key-002",
+		Name:        "Secondary",
+		IsAvailable: true,
+		Content:     datatypes.JSON([]byte(`{"type":"codex"}`)),
+	}
+	if errCreate := db.Create(&other).Error; errCreate != nil {
+		t.Fatalf("create other auth: %v", errCreate)
+	}
+
+	quotaRows := []models.Quota{
+		{AuthID: matched.ID, Type: "antigravity", Data: datatypes.JSON([]byte(`{"ok":true}`))},
+		{AuthID: other.ID, Type: "codex", Data: datatypes.JSON([]byte(`{"ok":true}`))},
+	}
+	if errCreate := db.Create(&quotaRows).Error; errCreate != nil {
+		t.Fatalf("create quota rows: %v", errCreate)
+	}
+
+	handler := NewQuotaHandler(db, &manualRefreshTestRefresher{}, NewQuotaManualRefreshTaskStore(time.Minute, 100))
+	keys, _, errList := handler.listManualRefreshAuthKeys(context.Background(), quotaManualRefreshCreateRequest{Key: "PRIMARY"})
+	if errList != nil {
+		t.Fatalf("list manual refresh auth keys: %v", errList)
+	}
+	if len(keys) != 1 || keys[0] != matched.Key {
+		t.Fatalf("expected only matched key %q, got %#v", matched.Key, keys)
+	}
+}

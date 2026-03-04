@@ -36,6 +36,7 @@ func TestQuotaListIncludesAuthTokenHealthFields(t *testing.T) {
 	checkedAt := time.Date(2026, 2, 18, 7, 8, 9, 0, time.UTC)
 	auth := models.Auth{
 		Key:             "auth-with-health",
+		Name:            "Primary Auth Name",
 		Content:         datatypes.JSON([]byte(`{"type":"codex"}`)),
 		IsAvailable:     false,
 		TokenInvalid:    true,
@@ -66,6 +67,7 @@ func TestQuotaListIncludesAuthTokenHealthFields(t *testing.T) {
 
 	var resp struct {
 		Quotas []struct {
+			AuthName        string     `json:"auth_name"`
 			AuthKey         string     `json:"auth_key"`
 			IsAvailable     bool       `json:"is_available"`
 			TokenInvalid    bool       `json:"token_invalid"`
@@ -80,6 +82,9 @@ func TestQuotaListIncludesAuthTokenHealthFields(t *testing.T) {
 		t.Fatalf("expected 1 quota row, got %d", len(resp.Quotas))
 	}
 	row := resp.Quotas[0]
+	if row.AuthName != auth.Name {
+		t.Fatalf("expected auth_name=%q, got %q", auth.Name, row.AuthName)
+	}
 	if row.AuthKey != auth.Key {
 		t.Fatalf("expected auth_key=%q, got %q", auth.Key, row.AuthKey)
 	}
@@ -119,5 +124,66 @@ func TestParseQuotaListAuthCheckTime(t *testing.T) {
 				t.Fatalf("expected parsed time for %q, got nil", tc.input.String)
 			}
 		})
+	}
+}
+
+func TestQuotaListSupportsNameSearchUsingKeyParam(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupQuotaListDB(t)
+
+	matched := models.Auth{
+		Key:     "file-alpha.json",
+		Name:    "Primary Billing",
+		Content: datatypes.JSON([]byte(`{"type":"codex"}`)),
+	}
+	if errCreate := db.Create(&matched).Error; errCreate != nil {
+		t.Fatalf("create matched auth: %v", errCreate)
+	}
+	if errCreate := db.Create(&models.Quota{AuthID: matched.ID, Type: "codex", Data: datatypes.JSON([]byte(`{"ok":true}`))}).Error; errCreate != nil {
+		t.Fatalf("create matched quota: %v", errCreate)
+	}
+
+	other := models.Auth{
+		Key:     "file-beta.json",
+		Name:    "Secondary",
+		Content: datatypes.JSON([]byte(`{"type":"codex"}`)),
+	}
+	if errCreate := db.Create(&other).Error; errCreate != nil {
+		t.Fatalf("create other auth: %v", errCreate)
+	}
+	if errCreate := db.Create(&models.Quota{AuthID: other.ID, Type: "codex", Data: datatypes.JSON([]byte(`{"ok":true}`))}).Error; errCreate != nil {
+		t.Fatalf("create other quota: %v", errCreate)
+	}
+
+	handler := NewQuotaHandler(db, nil, nil)
+	router := gin.New()
+	router.GET("/v0/admin/quotas", handler.List)
+
+	req := httptest.NewRequest(http.MethodGet, "/v0/admin/quotas?key=PRIMARY", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var resp struct {
+		Quotas []struct {
+			AuthID   uint64 `json:"auth_id"`
+			AuthName string `json:"auth_name"`
+			AuthKey  string `json:"auth_key"`
+		} `json:"quotas"`
+	}
+	if errDecode := json.Unmarshal(w.Body.Bytes(), &resp); errDecode != nil {
+		t.Fatalf("decode response: %v", errDecode)
+	}
+	if len(resp.Quotas) != 1 {
+		t.Fatalf("expected 1 quota row, got %d", len(resp.Quotas))
+	}
+	row := resp.Quotas[0]
+	if row.AuthID != matched.ID {
+		t.Fatalf("expected auth_id=%d, got %d", matched.ID, row.AuthID)
+	}
+	if row.AuthName != matched.Name {
+		t.Fatalf("expected auth_name=%q, got %q", matched.Name, row.AuthName)
 	}
 }
