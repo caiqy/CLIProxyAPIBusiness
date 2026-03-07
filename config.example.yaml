@@ -59,6 +59,7 @@ auth:
 streaming:
   keepalive-seconds: 0
   bootstrap-retries: 0
+  anthropic-sse-lifecycle-enable: true
 
 # 非流式"空行保活"（秒）
 nonstream-keepalive-interval: 0
