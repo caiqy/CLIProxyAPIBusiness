@@ -466,3 +466,25 @@ func TestManualRefreshKeyFilterSupportsAuthName(t *testing.T) {
 		t.Fatalf("expected only matched key %q, got %#v", matched.Key, keys)
 	}
 }
+
+func TestListManualRefreshAuthKeysIncludesCopilotWithoutQuotaRow(t *testing.T) {
+	db := setupQuotaManualRefreshDB(t)
+
+	copilot := models.Auth{
+		Key:         "copilot-first-time",
+		IsAvailable: true,
+		Content:     datatypes.JSON([]byte(`{"type":"github-copilot"}`)),
+	}
+	if errCreate := db.Create(&copilot).Error; errCreate != nil {
+		t.Fatalf("create copilot auth: %v", errCreate)
+	}
+
+	handler := NewQuotaHandler(db, &manualRefreshTestRefresher{}, NewQuotaManualRefreshTaskStore(time.Minute, 100))
+	keys, _, errList := handler.listManualRefreshAuthKeys(context.Background(), quotaManualRefreshCreateRequest{Type: "github-copilot"})
+	if errList != nil {
+		t.Fatalf("list manual refresh auth keys: %v", errList)
+	}
+	if len(keys) != 1 || keys[0] != copilot.Key {
+		t.Fatalf("expected only copilot key %q, got %#v", copilot.Key, keys)
+	}
+}

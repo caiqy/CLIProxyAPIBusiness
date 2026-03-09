@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -144,6 +145,48 @@ func (h *QuotaHandler) listManualRefreshAuthKeys(ctx context.Context, req quotaM
 		if keyValue != "" {
 			cleaned = append(cleaned, keyValue)
 		}
+	}
+
+	shouldIncludeCopilotWithoutQuota := typ == "" || strings.EqualFold(typ, "github-copilot")
+	if shouldIncludeCopilotWithoutQuota {
+		typeExpr := dbutil.JSONExtractTextExpr(h.db, "auths.content", "type")
+		copilotQuery := h.db.WithContext(ctx).
+			Table("auths").
+			Where("auths.is_available").
+			Where(typeExpr+" = ?", "github-copilot")
+		if key != "" {
+			pattern := dbutil.NormalizeLikePattern(h.db, "%"+key+"%")
+			keyExpr := dbutil.CaseInsensitiveLikeExpr(h.db, "auths.key")
+			nameExpr := dbutil.CaseInsensitiveLikeExpr(h.db, "auths.name")
+			copilotQuery = copilotQuery.Where("("+keyExpr+" OR "+nameExpr+")", pattern, pattern)
+		}
+		if groupID > 0 {
+			copilotQuery = copilotQuery.Where(dbutil.JSONArrayContainsExpr(h.db, "auths.auth_group_id"), dbutil.JSONArrayContainsValue(h.db, groupID))
+		}
+
+		var copilotKeys []string
+		if errPluck := copilotQuery.Distinct("auths.key").Order("auths.key ASC").Pluck("auths.key", &copilotKeys).Error; errPluck != nil {
+			return nil, quotaManualRefreshFilter{}, fmt.Errorf("list copilot auths failed: %w", errPluck)
+		}
+
+		merged := make(map[string]struct{}, len(cleaned)+len(copilotKeys))
+		for _, keyValue := range cleaned {
+			if keyValue != "" {
+				merged[keyValue] = struct{}{}
+			}
+		}
+		for _, keyValue := range copilotKeys {
+			keyValue = strings.TrimSpace(keyValue)
+			if keyValue != "" {
+				merged[keyValue] = struct{}{}
+			}
+		}
+
+		cleaned = cleaned[:0]
+		for keyValue := range merged {
+			cleaned = append(cleaned, keyValue)
+		}
+		sort.Strings(cleaned)
 	}
 
 	return cleaned, quotaManualRefreshFilter{Key: key, Type: typ, AuthGroupID: group}, nil
