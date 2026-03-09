@@ -34,6 +34,7 @@ const (
 const (
 	antigravityUserAgent = "antigravity/1.11.5 windows/amd64"
 	codexUserAgent       = "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal"
+	copilotUserAgent     = "GitHubCopilotChat/0.38.2"
 )
 
 var (
@@ -44,6 +45,7 @@ var (
 	}
 	geminiCLIQuotaURL = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota"
 	codexUsageURL     = "https://chatgpt.com/backend-api/wham/usage"
+	copilotUserURL    = "https://api.github.com/copilot_internal/user"
 
 	ErrUnsupportedProvider = errors.New("quota poller: unsupported provider")
 )
@@ -200,7 +202,7 @@ func (p *Poller) poll(ctx context.Context) time.Duration {
 		if provider == "" {
 			provider = strings.ToLower(strings.TrimSpace(row.Type))
 		}
-		if provider != "antigravity" && provider != "codex" && provider != "gemini-cli" {
+		if provider != "antigravity" && provider != "codex" && provider != "gemini-cli" && provider != "github-copilot" {
 			continue
 		}
 
@@ -254,6 +256,8 @@ func (p *Poller) refreshAuth(ctx context.Context, auth *coreauth.Auth, row authR
 		errRefresh = p.pollCodex(ctx, auth, row)
 	case "gemini-cli":
 		errRefresh = p.pollGeminiCLI(ctx, auth, row)
+	case "github-copilot":
+		errRefresh = p.pollCopilot(ctx, auth, row)
 	default:
 		return ErrUnsupportedProvider
 	}
@@ -495,6 +499,44 @@ func (p *Poller) pollGeminiCLI(ctx context.Context, auth *coreauth.Auth, row aut
 	return nil
 }
 
+func (p *Poller) pollCopilot(ctx context.Context, auth *coreauth.Auth, row authRowInfo) error {
+	metadata := auth.Metadata
+	accessToken := resolveCopilotAccessToken(metadata)
+	if accessToken == "" {
+		log.Warnf("quota poller: github-copilot missing access token (auth=%s)", auth.ID)
+		return errors.New("quota poller: github-copilot missing access token")
+	}
+
+	headers := http.Header{}
+	headers.Set("Accept", "application/json")
+	headers.Set("Authorization", "Bearer "+accessToken)
+	headers.Set("User-Agent", copilotUserAgent)
+
+	status, payload, errReq := p.doRequest(ctx, auth, http.MethodGet, copilotUserURL, nil, headers)
+	if errReq != nil {
+		log.WithError(errReq).Warnf("quota poller: github-copilot request failed (auth=%s)", auth.ID)
+		return errReq
+	}
+	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+		log.Warnf("quota poller: github-copilot status=%d (auth=%s body=%s)", status, auth.ID, summarizePayload(payload))
+		return &providerRequestError{
+			provider:   "github-copilot",
+			statusCode: status,
+			err:        fmt.Errorf("quota poller: github-copilot non-2xx status=%d", status),
+		}
+	}
+
+	authType := strings.TrimSpace(row.Type)
+	if authType == "" {
+		authType = "github-copilot"
+	}
+	if errSave := p.saveQuota(ctx, row.ID, authType, payload); errSave != nil {
+		log.WithError(errSave).Warnf("quota poller: github-copilot save failed (auth=%s)", auth.ID)
+		return errSave
+	}
+	return nil
+}
+
 func (p *Poller) doRequest(ctx context.Context, auth *coreauth.Auth, method, targetURL string, body []byte, headers http.Header) (int, []byte, error) {
 	if p == nil || p.manager == nil {
 		return 0, nil, errors.New("quota poller: manager not initialized")
@@ -655,6 +697,28 @@ func resolveGeminiProjectID(metadata map[string]any) string {
 	if projectID := normalizeString(metadata["project_id"]); projectID != "" {
 		return projectID
 	}
+	return ""
+}
+
+func resolveCopilotAccessToken(metadata map[string]any) string {
+	if metadata == nil {
+		return ""
+	}
+	if accessToken := normalizeString(metadata["access_token"]); accessToken != "" {
+		return accessToken
+	}
+	if accessToken := normalizeString(metadata["accessToken"]); accessToken != "" {
+		return accessToken
+	}
+
+	meta := mapFromAny(metadata["metadata"])
+	if accessToken := normalizeString(meta["access_token"]); accessToken != "" {
+		return accessToken
+	}
+	if accessToken := normalizeString(meta["accessToken"]); accessToken != "" {
+		return accessToken
+	}
+
 	return ""
 }
 

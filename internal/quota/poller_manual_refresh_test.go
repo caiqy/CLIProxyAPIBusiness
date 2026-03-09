@@ -2,6 +2,7 @@ package quota
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -34,6 +35,7 @@ func setupPollerManualRefreshDB(t *testing.T) *gorm.DB {
 
 type sequenceProviderExecutor struct {
 	mu       sync.Mutex
+	provider string
 	statuses []int
 	bodies   []string
 	index    int
@@ -46,14 +48,18 @@ type authHealthSnapshot struct {
 }
 
 func (s *sequenceProviderExecutor) Identifier() string {
-	return "codex"
+	provider := strings.TrimSpace(s.provider)
+	if provider == "" {
+		return "codex"
+	}
+	return provider
 }
 
 func (s *sequenceProviderExecutor) Execute(context.Context, *coreauth.Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 	return cliproxyexecutor.Response{}, errors.New("not implemented")
 }
 
-func (s *sequenceProviderExecutor) ExecuteStream(context.Context, *coreauth.Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (<-chan cliproxyexecutor.StreamChunk, error) {
+func (s *sequenceProviderExecutor) ExecuteStream(context.Context, *coreauth.Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
 	return nil, errors.New("not implemented")
 }
 
@@ -313,5 +319,56 @@ func TestRefreshAuthKeepsTokenInvalidOnNonAuthFailureAfterInvalid(t *testing.T) 
 	}
 	if strings.TrimSpace(updated.LastAuthError) == "" {
 		t.Fatalf("expected last_auth_error to be set on 500")
+	}
+}
+
+func TestRefreshAuthCopilotSavesQuotaSnapshots(t *testing.T) {
+	db := setupPollerManualRefreshDB(t)
+	manager := coreauth.NewManager(nil, nil, nil)
+	executor := &sequenceProviderExecutor{
+		provider: "github-copilot",
+		statuses: []int{http.StatusOK},
+		bodies:   []string{`{"quota_snapshots":{"premium_interactions":{"remaining":231,"entitlement":300,"percent_remaining":77.06,"quota_id":"premium_interactions"}}}`},
+	}
+	manager.RegisterExecutor(executor)
+
+	authRecord := &coreauth.Auth{
+		ID:       "auth-copilot",
+		Provider: "github-copilot",
+		Metadata: map[string]any{"access_token": "gho_test_token"},
+	}
+	auth, errRegister := manager.Register(context.Background(), authRecord)
+	if errRegister != nil {
+		t.Fatalf("register auth: %v", errRegister)
+	}
+
+	row := models.Auth{Key: auth.ID, Content: datatypes.JSON([]byte(`{"type":"github-copilot"}`))}
+	if errCreate := db.Create(&row).Error; errCreate != nil {
+		t.Fatalf("create auth row: %v", errCreate)
+	}
+
+	poller := &Poller{db: db, manager: manager}
+	errRefresh := poller.refreshAuth(context.Background(), auth, authRowInfo{ID: row.ID, Type: "github-copilot"})
+	if errRefresh != nil {
+		t.Fatalf("expected refresh success, got %v", errRefresh)
+	}
+
+	var quotaRow models.Quota
+	if errLoad := db.WithContext(context.Background()).
+		Where("auth_id = ? AND type = ?", row.ID, "github-copilot").
+		First(&quotaRow).Error; errLoad != nil {
+		t.Fatalf("load quota row: %v", errLoad)
+	}
+
+	var payload map[string]any
+	if errJSON := json.Unmarshal(quotaRow.Data, &payload); errJSON != nil {
+		t.Fatalf("unmarshal quota payload: %v", errJSON)
+	}
+	quotaSnapshots, okSnapshots := payload["quota_snapshots"].(map[string]any)
+	if !okSnapshots {
+		t.Fatalf("expected quota_snapshots in payload, got %#v", payload)
+	}
+	if _, okPremium := quotaSnapshots["premium_interactions"]; !okPremium {
+		t.Fatalf("expected premium_interactions snapshot, got %#v", quotaSnapshots)
 	}
 }
