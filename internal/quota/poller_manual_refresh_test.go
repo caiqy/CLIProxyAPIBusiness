@@ -40,9 +40,10 @@ type sequenceProviderExecutor struct {
 	bodies   []string
 	index    int
 
-	failOnPresetAuthHeader bool
-	preparedAuthToken      string
-	receivedAuthHeader     string
+	requirePresetAuthHeader bool
+	expectedPresetAuth      string
+	preparedAuthToken       string
+	receivedAuthHeader      string
 }
 
 type authHealthSnapshot struct {
@@ -79,9 +80,13 @@ func (s *sequenceProviderExecutor) PrepareRequest(req *http.Request, _ *coreauth
 	if req == nil {
 		return nil
 	}
-	if s.failOnPresetAuthHeader {
-		if strings.TrimSpace(req.Header.Get("Authorization")) != "" {
-			return errors.New("authorization header must be injected by executor")
+	if s.requirePresetAuthHeader {
+		preset := strings.TrimSpace(req.Header.Get("Authorization"))
+		if preset == "" {
+			return errors.New("authorization header must be preset before executor prepare")
+		}
+		if expected := strings.TrimSpace(s.expectedPresetAuth); expected != "" && preset != expected {
+			return fmt.Errorf("unexpected preset authorization header: got %q want %q", preset, expected)
 		}
 	}
 	if token := strings.TrimSpace(s.preparedAuthToken); token != "" {
@@ -391,15 +396,15 @@ func TestRefreshAuthCopilotSavesQuotaSnapshots(t *testing.T) {
 	}
 }
 
-func TestRefreshAuthCopilotUsesExecutorPreparedToken(t *testing.T) {
+func TestRefreshAuthCopilotUsesBearerAccessTokenHeader(t *testing.T) {
 	db := setupPollerManualRefreshDB(t)
 	manager := coreauth.NewManager(nil, nil, nil)
 	executor := &sequenceProviderExecutor{
-		provider:               "github-copilot",
-		statuses:               []int{http.StatusOK},
-		bodies:                 []string{`{"quota_snapshots":{"chat":{"percent_remaining":100}}}`},
-		failOnPresetAuthHeader: true,
-		preparedAuthToken:      "models-token",
+		provider:                "github-copilot",
+		statuses:                []int{http.StatusOK},
+		bodies:                  []string{`{"quota_snapshots":{"chat":{"percent_remaining":100}}}`},
+		requirePresetAuthHeader: true,
+		expectedPresetAuth:      "Bearer gho_original_token",
 	}
 	manager.RegisterExecutor(executor)
 
@@ -423,7 +428,7 @@ func TestRefreshAuthCopilotUsesExecutorPreparedToken(t *testing.T) {
 	if errRefresh != nil {
 		t.Fatalf("expected refresh success, got %v", errRefresh)
 	}
-	if executor.receivedAuthHeader != "Bearer models-token" {
-		t.Fatalf("expected executor-injected token, got %q", executor.receivedAuthHeader)
+	if executor.receivedAuthHeader != "Bearer gho_original_token" {
+		t.Fatalf("expected bearer access token header, got %q", executor.receivedAuthHeader)
 	}
 }
