@@ -119,6 +119,9 @@ func RunServer(ctx context.Context, cfg config.AppConfig, defaultPort int) error
 	coreCfg.DisableCooling = true
 	coreCfg.RemoteManagement.DisableControlPanel = true
 	coreCfg.AuthDir, _ = os.Getwd()
+	if coreCfg.TLSInsecureSkipVerify {
+		log.Warn("tls-insecure-skip-verify is enabled: upstream TLS certificate verification is disabled")
+	}
 	if coreCfg.Port <= 0 {
 		if defaultPort <= 0 {
 			defaultPort = 8318

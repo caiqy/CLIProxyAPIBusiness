@@ -41,6 +41,11 @@ usage-statistics-enabled: false
 # 全局上游代理（可选；单个 key/provider 也可覆盖）
 proxy-url: ""
 
+# 全局 TLS 证书校验开关（仅影响上游 API 请求）
+# true = 跳过证书校验（不安全，仅建议受控内网排障使用）
+# false = 严格校验证书（默认）
+tls-insecure-skip-verify: false
+
 # 模型前缀控制（多租户/多组 key 时用）
 force-model-prefix: false
 
