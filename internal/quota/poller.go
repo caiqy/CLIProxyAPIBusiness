@@ -509,8 +509,10 @@ func (p *Poller) pollCopilot(ctx context.Context, auth *coreauth.Auth, row authR
 
 	headers := http.Header{}
 	headers.Set("Accept", "application/json")
-	headers.Set("Authorization", "Bearer "+accessToken)
 	headers.Set("User-Agent", copilotUserAgent)
+	// Authorization is intentionally NOT set here.
+	// The manager/executor PrepareRequest path injects the Copilot API token
+	// (same token source used by /models querying) right before dispatch.
 
 	status, payload, errReq := p.doRequest(ctx, auth, http.MethodGet, copilotUserURL, nil, headers)
 	if errReq != nil {

@@ -39,6 +39,10 @@ type sequenceProviderExecutor struct {
 	statuses []int
 	bodies   []string
 	index    int
+
+	failOnPresetAuthHeader bool
+	preparedAuthToken      string
+	receivedAuthHeader     string
 }
 
 type authHealthSnapshot struct {
@@ -71,13 +75,27 @@ func (s *sequenceProviderExecutor) CountTokens(context.Context, *coreauth.Auth, 
 	return cliproxyexecutor.Response{}, errors.New("not implemented")
 }
 
-func (s *sequenceProviderExecutor) PrepareRequest(_ *http.Request, _ *coreauth.Auth) error {
+func (s *sequenceProviderExecutor) PrepareRequest(req *http.Request, _ *coreauth.Auth) error {
+	if req == nil {
+		return nil
+	}
+	if s.failOnPresetAuthHeader {
+		if strings.TrimSpace(req.Header.Get("Authorization")) != "" {
+			return errors.New("authorization header must be injected by executor")
+		}
+	}
+	if token := strings.TrimSpace(s.preparedAuthToken); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	return nil
 }
 
-func (s *sequenceProviderExecutor) HttpRequest(_ context.Context, _ *coreauth.Auth, _ *http.Request) (*http.Response, error) {
+func (s *sequenceProviderExecutor) HttpRequest(_ context.Context, _ *coreauth.Auth, req *http.Request) (*http.Response, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if req != nil {
+		s.receivedAuthHeader = strings.TrimSpace(req.Header.Get("Authorization"))
+	}
 	status := http.StatusOK
 	body := `{"ok":true}`
 	if s.index < len(s.statuses) {
@@ -370,5 +388,42 @@ func TestRefreshAuthCopilotSavesQuotaSnapshots(t *testing.T) {
 	}
 	if _, okPremium := quotaSnapshots["premium_interactions"]; !okPremium {
 		t.Fatalf("expected premium_interactions snapshot, got %#v", quotaSnapshots)
+	}
+}
+
+func TestRefreshAuthCopilotUsesExecutorPreparedToken(t *testing.T) {
+	db := setupPollerManualRefreshDB(t)
+	manager := coreauth.NewManager(nil, nil, nil)
+	executor := &sequenceProviderExecutor{
+		provider:               "github-copilot",
+		statuses:               []int{http.StatusOK},
+		bodies:                 []string{`{"quota_snapshots":{"chat":{"percent_remaining":100}}}`},
+		failOnPresetAuthHeader: true,
+		preparedAuthToken:      "models-token",
+	}
+	manager.RegisterExecutor(executor)
+
+	authRecord := &coreauth.Auth{
+		ID:       "auth-copilot-token-source",
+		Provider: "github-copilot",
+		Metadata: map[string]any{"access_token": "gho_original_token"},
+	}
+	auth, errRegister := manager.Register(context.Background(), authRecord)
+	if errRegister != nil {
+		t.Fatalf("register auth: %v", errRegister)
+	}
+
+	row := models.Auth{Key: auth.ID, Content: datatypes.JSON([]byte(`{"type":"github-copilot"}`))}
+	if errCreate := db.Create(&row).Error; errCreate != nil {
+		t.Fatalf("create auth row: %v", errCreate)
+	}
+
+	poller := &Poller{db: db, manager: manager}
+	errRefresh := poller.refreshAuth(context.Background(), auth, authRowInfo{ID: row.ID, Type: "github-copilot"})
+	if errRefresh != nil {
+		t.Fatalf("expected refresh success, got %v", errRefresh)
+	}
+	if executor.receivedAuthHeader != "Bearer models-token" {
+		t.Fatalf("expected executor-injected token, got %q", executor.receivedAuthHeader)
 	}
 }
