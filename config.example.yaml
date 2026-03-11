@@ -98,6 +98,23 @@ ws-auth: false
 # Codex 指令注入开关
 codex-instructions-enabled: false
 
+# GitHub Copilot 执行器行为覆盖（可选）
+# github-copilot:
+#   # 强制将 X-Initiator 推导为 agent：
+#   # 当请求中没有 assistant/tool 角色时，注入一条伪 assistant 消息
+#   force-agent-initiator: true
+#
+#   # 注入的伪 assistant 文本，留空默认 "OK."
+#   fake-assistant-content: "OK."
+#
+#   # 周期性放行（滚动窗口内严格一次不注入）
+#   # 分桶维度：model + 稳定身份（auth.ID / access_token）
+#   force-agent-initiator-bypass:
+#     enabled: true
+#     window: 1h
+#     # 建议挂载到持久化目录，避免容器重启后状态丢失
+#     state-file: /CLIProxyAPIBusiness/data/copilot_initiator_bypass_state.json
+
 # ===== 各类上游凭据（按需启用）=====
 
 gemini-api-key: []
