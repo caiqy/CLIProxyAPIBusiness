@@ -82,10 +82,38 @@ func (h *AuthFileHandler) Create(c *gin.Context) {
 	if body.IsAvailable != nil {
 		isAvailable = *body.IsAvailable
 	}
+	contentMap := map[string]any{}
+	if body.Content != nil {
+		contentMap = body.Content
+	}
+
+	contentProxyURL, contentHasProxyURL, errContentProxy := normalizedProxyURLFromContent(contentMap)
+	if errContentProxy != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proxy_url"})
+		return
+	}
 
 	proxyURL := ""
 	if body.ProxyURL != nil {
-		proxyURL = strings.TrimSpace(*body.ProxyURL)
+		trimmed := strings.TrimSpace(*body.ProxyURL)
+		if trimmed == "" {
+			delete(contentMap, "proxy_url")
+		} else {
+			normalized, errNormalize := normalizeProxyURL(trimmed)
+			if errNormalize != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proxy_url"})
+				return
+			}
+			proxyURL = normalized
+			contentMap["proxy_url"] = normalized
+		}
+	} else if contentHasProxyURL {
+		proxyURL = contentProxyURL
+		if proxyURL == "" {
+			delete(contentMap, "proxy_url")
+		} else {
+			contentMap["proxy_url"] = proxyURL
+		}
 	}
 	if proxyURL == "" && autoAssignProxyEnabled() {
 		assignedProxyURL, errAssignProxy := pickRandomProxyURL(c.Request.Context(), h.db)
@@ -99,14 +127,14 @@ func (h *AuthFileHandler) Create(c *gin.Context) {
 	}
 
 	contentJSON := datatypes.JSON("{}")
-	if body.Content != nil {
-		contentBytes, errMarshal := json.Marshal(body.Content)
+	if len(contentMap) > 0 {
+		contentBytes, errMarshal := json.Marshal(contentMap)
 		if errMarshal == nil {
 			contentJSON = datatypes.JSON(contentBytes)
 		}
 	}
 	whitelistEnabled := body.Whitelist != nil && *body.Whitelist
-	allowedModels, excludedModels, errWhitelist := computeAuthFileWhitelistFields(body.Content, whitelistEnabled, body.Allowed)
+	allowedModels, excludedModels, errWhitelist := computeAuthFileWhitelistFields(contentMap, whitelistEnabled, body.Allowed)
 	if errWhitelist != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": errWhitelist.Error()})
 		return
@@ -300,7 +328,18 @@ func (h *AuthFileHandler) Import(c *gin.Context) {
 
 		proxyURL := ""
 		if proxyValue, okProxy := payload["proxy_url"].(string); okProxy {
-			proxyURL = strings.TrimSpace(proxyValue)
+			trimmed := strings.TrimSpace(proxyValue)
+			if trimmed != "" {
+				normalized, errNormalize := normalizeProxyURL(trimmed)
+				if errNormalize != nil {
+					failures = append(failures, importAuthFilesFailure{
+						File:  file.Filename,
+						Error: "invalid proxy_url",
+					})
+					continue
+				}
+				proxyURL = normalized
+			}
 		}
 		if proxyURL == "" && autoAssignProxyEnabled() {
 			assignedProxyURL, errAssignProxy := pickRandomProxyURL(c.Request.Context(), h.db)
@@ -569,21 +608,50 @@ func (h *AuthFileHandler) Update(c *gin.Context) {
 	if body.AuthGroupID != nil {
 		updates["auth_group_id"] = body.AuthGroupID.Clean()
 	}
-	if body.ProxyURL != nil {
-		updates["proxy_url"] = strings.TrimSpace(*body.ProxyURL)
-	}
+	workingContent := parseAuthContentMap(current.Content)
 	if body.Content != nil {
-		contentBytes, errMarshal := json.Marshal(body.Content)
+		workingContent = body.Content
+	}
+
+	if body.ProxyURL != nil {
+		trimmed := strings.TrimSpace(*body.ProxyURL)
+		if trimmed == "" {
+			updates["proxy_url"] = ""
+			delete(workingContent, "proxy_url")
+		} else {
+			normalized, errNormalize := normalizeProxyURL(trimmed)
+			if errNormalize != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proxy_url"})
+				return
+			}
+			updates["proxy_url"] = normalized
+			workingContent["proxy_url"] = normalized
+		}
+	} else if body.Content != nil {
+		contentProxyURL, contentHasProxyURL, errContentProxy := normalizedProxyURLFromContent(workingContent)
+		if errContentProxy != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proxy_url"})
+			return
+		}
+		if contentHasProxyURL {
+			updates["proxy_url"] = contentProxyURL
+			if contentProxyURL == "" {
+				delete(workingContent, "proxy_url")
+			} else {
+				workingContent["proxy_url"] = contentProxyURL
+			}
+		}
+	}
+
+	if body.Content != nil || body.ProxyURL != nil {
+		contentBytes, errMarshal := json.Marshal(workingContent)
 		if errMarshal == nil {
 			updates["content"] = datatypes.JSON(contentBytes)
 		}
 	}
 	shouldProcessWhitelist := body.Whitelist != nil || body.Allowed != nil || (body.Content != nil && current.WhitelistEnabled)
 	if shouldProcessWhitelist {
-		contentMap := parseAuthContentMap(current.Content)
-		if body.Content != nil {
-			contentMap = body.Content
-		}
+		whitelistContent := workingContent
 		whitelistEnabled := current.WhitelistEnabled
 		if body.Whitelist != nil {
 			whitelistEnabled = *body.Whitelist
@@ -592,7 +660,7 @@ func (h *AuthFileHandler) Update(c *gin.Context) {
 		if body.Allowed != nil {
 			allowedModels = normalizeModelNames(*body.Allowed)
 		}
-		allowedModels, excludedModels, errWhitelist := computeAuthFileWhitelistFields(contentMap, whitelistEnabled, allowedModels)
+		allowedModels, excludedModels, errWhitelist := computeAuthFileWhitelistFields(whitelistContent, whitelistEnabled, allowedModels)
 		if errWhitelist != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": errWhitelist.Error()})
 			return
@@ -642,6 +710,29 @@ func parseAuthContentMap(content datatypes.JSON) map[string]any {
 		return map[string]any{}
 	}
 	return parsed
+}
+
+func normalizedProxyURLFromContent(content map[string]any) (string, bool, error) {
+	if content == nil {
+		return "", false, nil
+	}
+	raw, exists := content["proxy_url"]
+	if !exists {
+		return "", false, nil
+	}
+	rawString, ok := raw.(string)
+	if !ok {
+		return "", true, fmt.Errorf("invalid proxy_url")
+	}
+	trimmed := strings.TrimSpace(rawString)
+	if trimmed == "" {
+		return "", true, nil
+	}
+	normalized, errNormalize := normalizeProxyURL(trimmed)
+	if errNormalize != nil {
+		return "", true, errNormalize
+	}
+	return normalized, true, nil
 }
 
 func resolveAuthFileProviderFromContent(content map[string]any) (string, error) {

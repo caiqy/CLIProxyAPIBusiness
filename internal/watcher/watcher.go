@@ -536,7 +536,7 @@ func (w *dbWatcher) pollAuth(ctx context.Context, force bool) {
 
 	var rows []models.Auth
 	if errFind := w.db.WithContext(qctx).
-		Select("key", "content", "priority", "token_invalid", "created_at", "updated_at", "excluded_models").
+		Select("key", "proxy_url", "content", "priority", "token_invalid", "created_at", "updated_at", "excluded_models").
 		Where("is_available = ?", true).
 		Order("id ASC").
 		Find(&rows).Error; errFind != nil {
@@ -559,7 +559,7 @@ func (w *dbWatcher) pollAuth(ctx context.Context, force bool) {
 		hash := hashBytes(row.Content)
 		nextStates[key] = authState{hash: hash, updatedAt: row.UpdatedAt}
 
-		a := synthesizeAuthFromDBRow(w.authDir, key, row.Content, row.Priority, row.TokenInvalid, row.CreatedAt, row.UpdatedAt, decodeExcludedModelsJSON(row.ExcludedModels))
+		a := synthesizeAuthFromDBRow(w.authDir, key, row.Content, row.ProxyURL, row.Priority, row.TokenInvalid, row.CreatedAt, row.UpdatedAt, decodeExcludedModelsJSON(row.ExcludedModels))
 		if a == nil || a.ID == "" {
 			continue
 		}
@@ -1173,7 +1173,7 @@ func encodeUpdate(enc *updateEncoder, update authUpdate) (reflect.Value, bool) {
 }
 
 // synthesizeAuthFromDBRow builds an auth entry from the stored JSON payload.
-func synthesizeAuthFromDBRow(authDir string, key string, payload []byte, priority int, tokenInvalid bool, createdAt, updatedAt time.Time, excludedModels []string) *coreauth.Auth {
+func synthesizeAuthFromDBRow(authDir string, key string, payload []byte, dbProxyURL string, priority int, tokenInvalid bool, createdAt, updatedAt time.Time, excludedModels []string) *coreauth.Auth {
 	var metadata map[string]any
 	if errUnmarshal := json.Unmarshal(payload, &metadata); errUnmarshal != nil {
 		return nil
@@ -1197,9 +1197,11 @@ func synthesizeAuthFromDBRow(authDir string, key string, payload []byte, priorit
 		label = strings.TrimSpace(email)
 	}
 
-	proxyURL := ""
-	if v, ok := metadata["proxy_url"].(string); ok {
-		proxyURL = strings.TrimSpace(v)
+	proxyURL := strings.TrimSpace(dbProxyURL)
+	if proxyURL == "" {
+		if v, ok := metadata["proxy_url"].(string); ok {
+			proxyURL = strings.TrimSpace(v)
+		}
 	}
 
 	prefix := ""

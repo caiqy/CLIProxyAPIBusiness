@@ -163,7 +163,16 @@ func normalizeProviderEntry(provider string, raw map[string]any) (map[string]any
 	}
 
 	if proxyURL, okProxy := normalized["proxy_url"].(string); okProxy {
-		normalized["proxy_url"] = strings.TrimSpace(proxyURL)
+		trimmed := strings.TrimSpace(proxyURL)
+		if trimmed == "" {
+			delete(normalized, "proxy_url")
+		} else {
+			normalizedProxyURL, errNormalize := normalizeProxyURL(trimmed)
+			if errNormalize != nil {
+				return nil, fmt.Errorf("invalid proxy_url")
+			}
+			normalized["proxy_url"] = normalizedProxyURL
+		}
 	}
 
 	if rule.validate != nil {

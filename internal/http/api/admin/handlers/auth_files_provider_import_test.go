@@ -177,3 +177,15 @@ func TestNormalizeProviderEntry_Kilo_AccessTokenRequired(t *testing.T) {
 		t.Fatalf("expected canonical type kilo, got %q", got)
 	}
 }
+
+func TestNormalizeProviderEntry_RejectsUnsupportedProxyScheme(t *testing.T) {
+	t.Parallel()
+
+	_, err := normalizeProviderEntry("codex", map[string]any{
+		"access_token": "token-123",
+		"proxy_url":    "ftp://127.0.0.1:21",
+	})
+	if err == nil {
+		t.Fatalf("expected invalid proxy_url error")
+	}
+}

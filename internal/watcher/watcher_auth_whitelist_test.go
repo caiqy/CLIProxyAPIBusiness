@@ -11,6 +11,7 @@ func TestSynthesizeAuthFromDBRow_IncludesExcludedModelsAttribute(t *testing.T) {
 		"",
 		"auth-a",
 		[]byte(`{"type":"claude","email":"demo@example.com"}`),
+		"",
 		0,
 		false,
 		now,
@@ -36,5 +37,62 @@ func TestNormalizeExcludedModelNames_DedupAndSort(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("got[%d]=%q, want %q (all=%v)", i, got[i], want[i], got)
 		}
+	}
+}
+
+func TestSynthesizeAuthFromDBRow_PrefersDBProxyURLOverMetadata(t *testing.T) {
+	now := time.Now().UTC()
+	a := synthesizeAuthFromDBRow(
+		"",
+		"auth-proxy-a",
+		[]byte(`{"type":"claude","proxy_url":"http://127.0.0.1:7001"}`),
+		"http://127.0.0.1:7002",
+		0,
+		false,
+		now,
+		now,
+		nil,
+	)
+	if a == nil || a.ProxyURL != "http://127.0.0.1:7002" {
+		t.Fatalf("expected db proxy_url to win, got %#v", a)
+	}
+}
+
+func TestSynthesizeAuthFromDBRow_FallsBackToMetadataProxyURL(t *testing.T) {
+	now := time.Now().UTC()
+	a := synthesizeAuthFromDBRow(
+		"",
+		"auth-proxy-b",
+		[]byte(`{"type":"claude","proxy_url":"http://127.0.0.1:7001"}`),
+		"",
+		0,
+		false,
+		now,
+		now,
+		nil,
+	)
+	if a == nil || a.ProxyURL != "http://127.0.0.1:7001" {
+		t.Fatalf("expected metadata proxy_url fallback, got %#v", a)
+	}
+}
+
+func TestSynthesizeAuthFromDBRow_EmptyWhenBothProxySourcesMissing(t *testing.T) {
+	now := time.Now().UTC()
+	a := synthesizeAuthFromDBRow(
+		"",
+		"auth-proxy-c",
+		[]byte(`{"type":"claude"}`),
+		"",
+		0,
+		false,
+		now,
+		now,
+		nil,
+	)
+	if a == nil {
+		t.Fatal("expected auth not nil")
+	}
+	if a.ProxyURL != "" {
+		t.Fatalf("expected empty proxy_url when db and metadata are empty, got %q", a.ProxyURL)
 	}
 }

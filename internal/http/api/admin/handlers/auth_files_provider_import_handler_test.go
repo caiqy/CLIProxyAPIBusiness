@@ -204,3 +204,73 @@ func TestImportByProvider_GitHubCopilot_SucceedsWithAccessTokenOnly(t *testing.T
 		t.Fatalf("expected auto-generated key github-copilot-copilot@example.com, got %q", rows[0].Key)
 	}
 }
+
+func TestImportByProvider_InvalidProxyURLGoesToFailedList(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupAuthFileProviderImportDB(t)
+	handler := NewAuthFileHandler(db)
+
+	router := gin.New()
+	router.POST("/v0/admin/auth-files/import-by-provider", handler.ImportByProvider)
+
+	body := map[string]any{
+		"provider": "codex",
+		"source":   "text",
+		"entries": []map[string]any{
+			{
+				"access_token": "codex-token-a",
+				"email":        "ok@example.com",
+				"proxy_url":    "http://127.0.0.1:7890",
+			},
+			{
+				"access_token": "codex-token-b",
+				"email":        "bad@example.com",
+				"proxy_url":    "ftp://127.0.0.1:21",
+			},
+		},
+	}
+	raw, errMarshal := json.Marshal(body)
+	if errMarshal != nil {
+		t.Fatalf("marshal request: %v", errMarshal)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v0/admin/auth-files/import-by-provider", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Imported int `json:"imported"`
+		Failed   []struct {
+			Index int    `json:"index"`
+			Error string `json:"error"`
+		} `json:"failed"`
+	}
+	if errDecode := json.Unmarshal(w.Body.Bytes(), &resp); errDecode != nil {
+		t.Fatalf("decode response: %v", errDecode)
+	}
+	if resp.Imported != 1 {
+		t.Fatalf("expected imported=1, got %d", resp.Imported)
+	}
+	if len(resp.Failed) != 1 {
+		t.Fatalf("expected 1 failed item, got %d", len(resp.Failed))
+	}
+	if resp.Failed[0].Index != 2 {
+		t.Fatalf("expected failed index=2, got %d", resp.Failed[0].Index)
+	}
+
+	var rows []models.Auth
+	if errFind := db.Order("id ASC").Find(&rows).Error; errFind != nil {
+		t.Fatalf("query auth rows: %v", errFind)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 imported auth row, got %d", len(rows))
+	}
+	if rows[0].Key != "codex-ok@example.com" {
+		t.Fatalf("expected imported key codex-ok@example.com, got %q", rows[0].Key)
+	}
+}
