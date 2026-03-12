@@ -354,6 +354,9 @@ func migratePostgres(conn *gorm.DB) error {
 	`).Error; errUserPasskeyBackupStateAdd != nil {
 		return fmt.Errorf("db: add user passkey backup state: %w", errUserPasskeyBackupStateAdd)
 	}
+	if errBillingRulesNormalize := normalizeAndDeduplicateBillingRulesPostgres(conn); errBillingRulesNormalize != nil {
+		return errBillingRulesNormalize
+	}
 	if errModelIDAdd := conn.Exec(`
 		ALTER TABLE models
 		ADD COLUMN IF NOT EXISTS model_id varchar(255)
@@ -531,6 +534,13 @@ func migratePostgres(conn *gorm.DB) error {
 			sql: `
 				CREATE INDEX IF NOT EXISTS idx_billing_rules_match
 				ON billing_rules (auth_group_id, user_group_id, is_enabled, provider, model)
+			`,
+		},
+		{
+			name: "idx_billing_rules_unique_key",
+			sql: `
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_rules_unique_key
+				ON billing_rules (auth_group_id, user_group_id, provider, model)
 			`,
 		},
 		{
@@ -1053,6 +1063,9 @@ func migrateSQLite(conn *gorm.DB) error {
 	`).Error; errAdminSuperSeed != nil {
 		return fmt.Errorf("db: seed admin super flag: %w", errAdminSuperSeed)
 	}
+	if errBillingRulesNormalize := normalizeAndDeduplicateBillingRulesSQLite(conn); errBillingRulesNormalize != nil {
+		return errBillingRulesNormalize
+	}
 
 	// ddl defines an index or DDL statement to apply.
 	type ddl struct {
@@ -1145,6 +1158,13 @@ func migrateSQLite(conn *gorm.DB) error {
 			sql: `
 				CREATE INDEX IF NOT EXISTS idx_billing_rules_match
 				ON billing_rules (auth_group_id, user_group_id, is_enabled, provider, model)
+			`,
+		},
+		{
+			name: "idx_billing_rules_unique_key",
+			sql: `
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_rules_unique_key
+				ON billing_rules (auth_group_id, user_group_id, provider, model)
 			`,
 		},
 		{
@@ -1269,6 +1289,69 @@ func migrateSQLite(conn *gorm.DB) error {
 		}
 	}
 
+	return nil
+}
+
+func normalizeAndDeduplicateBillingRulesPostgres(conn *gorm.DB) error {
+	if conn == nil {
+		return fmt.Errorf("db: normalize billing rules: nil connection")
+	}
+	if errDedup := conn.Exec(`
+		WITH ranked AS (
+			SELECT id,
+				ROW_NUMBER() OVER (
+					PARTITION BY auth_group_id, user_group_id, LOWER(BTRIM(provider)), BTRIM(model)
+					ORDER BY updated_at DESC NULLS LAST, id DESC
+				) AS rn
+			FROM billing_rules
+		)
+		DELETE FROM billing_rules br
+		USING ranked
+		WHERE br.id = ranked.id
+		  AND ranked.rn > 1
+	`).Error; errDedup != nil {
+		return fmt.Errorf("db: deduplicate billing rules: %w", errDedup)
+	}
+	if errNormalize := conn.Exec(`
+		UPDATE billing_rules
+		SET provider = LOWER(BTRIM(provider)),
+			model = BTRIM(model)
+		WHERE provider IS NOT NULL OR model IS NOT NULL
+	`).Error; errNormalize != nil {
+		return fmt.Errorf("db: normalize billing rules: %w", errNormalize)
+	}
+	return nil
+}
+
+func normalizeAndDeduplicateBillingRulesSQLite(conn *gorm.DB) error {
+	if conn == nil {
+		return fmt.Errorf("db: normalize billing rules: nil connection")
+	}
+	if errDedup := conn.Exec(`
+		DELETE FROM billing_rules
+		WHERE id IN (
+			SELECT id
+			FROM (
+				SELECT id,
+					ROW_NUMBER() OVER (
+						PARTITION BY auth_group_id, user_group_id, lower(trim(provider)), trim(model)
+						ORDER BY COALESCE(datetime(updated_at), '1970-01-01 00:00:00') DESC, id DESC
+					) AS rn
+				FROM billing_rules
+			) ranked
+			WHERE ranked.rn > 1
+		)
+	`).Error; errDedup != nil {
+		return fmt.Errorf("db: deduplicate billing rules: %w", errDedup)
+	}
+	if errNormalize := conn.Exec(`
+		UPDATE billing_rules
+		SET provider = lower(trim(provider)),
+			model = trim(model)
+		WHERE provider IS NOT NULL OR model IS NOT NULL
+	`).Error; errNormalize != nil {
+		return fmt.Errorf("db: normalize billing rules: %w", errNormalize)
+	}
 	return nil
 }
 

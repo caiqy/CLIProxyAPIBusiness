@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/glebarez/sqlite"
+	"github.com/router-for-me/CLIProxyAPIBusiness/internal/models"
 	"gorm.io/gorm"
 )
 
@@ -180,4 +181,80 @@ func TestMigrateSQLiteAuthWhitelistColumnsBackfillExistingAuthsTable(t *testing.
 	if !row.ExcludedModels.Valid || row.ExcludedModels.String != "[]" {
 		t.Fatalf("unexpected legacy excluded_models value: %+v", row.ExcludedModels)
 	}
+}
+
+func TestMigrateSQLiteBillingRulesUniqueKey(t *testing.T) {
+	conn, errOpen := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if errOpen != nil {
+		t.Fatalf("open sqlite: %v", errOpen)
+	}
+
+	if errMigrate := Migrate(conn); errMigrate != nil {
+		t.Fatalf("migrate: %v", errMigrate)
+	}
+
+	first := models.BillingRule{
+		AuthGroupID: 1,
+		UserGroupID: 1,
+		Provider:    "openai",
+		Model:       "gpt-5.3-codex",
+		BillingType: models.BillingTypePerToken,
+		IsEnabled:   true,
+	}
+	if errCreate := conn.Create(&first).Error; errCreate != nil {
+		t.Fatalf("create first billing rule: %v", errCreate)
+	}
+
+	dup := models.BillingRule{
+		AuthGroupID: 1,
+		UserGroupID: 1,
+		Provider:    "openai",
+		Model:       "gpt-5.3-codex",
+		BillingType: models.BillingTypePerToken,
+		IsEnabled:   true,
+	}
+	errDup := conn.Create(&dup).Error
+	if errDup == nil {
+		t.Fatal("expected duplicate billing rule insert to fail")
+	}
+}
+
+func TestNormalizeAndDeduplicateBillingRulesSQLite(t *testing.T) {
+	conn, errOpen := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if errOpen != nil {
+		t.Fatalf("open sqlite: %v", errOpen)
+	}
+
+	if errMigrate := Migrate(conn); errMigrate != nil {
+		t.Fatalf("initial migrate: %v", errMigrate)
+	}
+
+	if errInsert := conn.Exec(`
+		INSERT INTO billing_rules (auth_group_id, user_group_id, provider, model, billing_type, is_enabled, created_at, updated_at)
+		VALUES
+		(1, 1, ' OpenAI ', 'gpt-5.3-codex ', 2, 1, '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
+		(1, 1, 'openai', 'gpt-5.3-codex', 2, 1, '2026-01-02 00:00:00', '2026-01-02 00:00:00')
+	`).Error; errInsert != nil {
+		t.Fatalf("insert legacy billing rules: %v", errInsert)
+	}
+
+	if errNormalize := normalizeAndDeduplicateBillingRulesSQLite(conn); errNormalize != nil {
+		t.Fatalf("normalize and deduplicate: %v", errNormalize)
+	}
+
+	var count int64
+	if errCount := conn.Raw(`
+		SELECT COUNT(*)
+		FROM billing_rules
+		WHERE auth_group_id = 1
+		  AND user_group_id = 1
+		  AND lower(trim(provider)) = 'openai'
+		  AND trim(model) = 'gpt-5.3-codex'
+	`).Scan(&count).Error; errCount != nil {
+		t.Fatalf("count normalized billing rules: %v", errCount)
+	}
+	if count != 1 {
+		t.Fatalf("expected one normalized billing rule row, got %d", count)
+	}
+
 }

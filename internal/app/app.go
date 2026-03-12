@@ -15,6 +15,7 @@ import (
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/access"
 	internalauth "github.com/router-for-me/CLIProxyAPIBusiness/internal/auth"
+	internalbilling "github.com/router-for-me/CLIProxyAPIBusiness/internal/billing"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/config"
 	"github.com/router-for-me/CLIProxyAPIBusiness/internal/db"
 	relayhttp "github.com/router-for-me/CLIProxyAPIBusiness/internal/http"
@@ -280,6 +281,11 @@ func RunServer(ctx context.Context, cfg config.AppConfig, defaultPort int) error
 	if modelSyncer := modelreference.NewSyncer(conn); modelSyncer != nil {
 		modelSyncer.Start(ctx)
 	}
+	go func() {
+		if errAutoImport := internalbilling.AutoImportDefaultGroupOnce(ctx, conn, 60*time.Second, 2*time.Second); errAutoImport != nil {
+			log.WithError(errAutoImport).Warn("billing rules auto import on startup failed")
+		}
+	}()
 
 	// serverAccessMgr.SetProviders(nil)
 
