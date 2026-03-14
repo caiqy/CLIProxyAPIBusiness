@@ -100,6 +100,25 @@ codex-instructions-enabled: false
 
 # GitHub Copilot 执行器行为覆盖（可选）
 # github-copilot:
+#   header-policy:
+#     # legacy (默认): 真实请求沿用旧逻辑（含部分透传）
+#     # dual-run:      真实请求仍按 legacy 发出，同时旁路运行 strict 候选并输出 diff
+#     # strict:        禁止透传 incoming headers，仅按治理规则生成
+#     mode: legacy # legacy / dual-run / strict
+#
+#     # 以下 4 个字段用于 strict/dual-run 候选头生成（优先级低于 auth metadata）
+#     user-agent: GitHubCopilotChat/0.39.0
+#     editor-version: vscode/1.111.0
+#     editor-plugin-version: copilot-chat/0.39.0
+#     anthropic-beta: advanced-tool-use-2025-11-20
+#
+#     # strict/dual-run 候选的会话状态文件（用于 Vscode-Sessionid / X-Interaction-Id）
+#     # 建议使用持久化路径
+#     session-state-file: /CLIProxyAPIBusiness/data/copilot_session_state.json
+#
+#     # dual-run 专用影子状态文件：仅用于旁路候选计算，不污染主状态
+#     shadow-state-file: /CLIProxyAPIBusiness/data/copilot_session_state.shadow.json
+#
 #   # 强制将 X-Initiator 推导为 agent：
 #   # 当请求中没有 assistant/tool 角色时，注入一条伪 assistant 消息
 #   force-agent-initiator: true

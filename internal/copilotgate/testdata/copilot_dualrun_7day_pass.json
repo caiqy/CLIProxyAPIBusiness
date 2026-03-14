@@ -1,0 +1,68 @@
+{
+  "report_type": "copilot_dualrun_7day_summary",
+  "days": [
+    {
+      "date": "2026-03-01",
+      "critical_diff_new": 2,
+      "undeclared_passthrough": 1,
+      "diffs": [
+        {
+          "header": "X-Request-Id",
+          "diff_type": "value_mismatch",
+          "legacy": {
+            "source": "computed",
+            "normalized_value": "legacy-req-20260314",
+            "value_hash": "59a0ce41df148213cb93647ea3fc40eba7ee84702f78fd6bd6855b5808e8e9e8"
+          },
+          "candidate": {
+            "source": "config",
+            "normalized_value": "candidate-req-20260314",
+            "value_hash": "d8cd9ad728d1d94b5d37d177adba4739c397f3df375f9ad6859d4e904b063ee0"
+          }
+        }
+      ]
+    },
+    {
+      "date": "2026-03-02",
+      "critical_diff_new": 0,
+      "undeclared_passthrough": 0,
+      "diffs": []
+    },
+    {
+      "date": "2026-03-03",
+      "critical_diff_new": 0,
+      "undeclared_passthrough": 0,
+      "diffs": []
+    },
+    {
+      "date": "2026-03-04",
+      "critical_diff_new": 0,
+      "undeclared_passthrough": 0,
+      "diffs": []
+    },
+    {
+      "date": "2026-03-05",
+      "critical_diff_new": 0,
+      "undeclared_passthrough": 0,
+      "diffs": []
+    },
+    {
+      "date": "2026-03-06",
+      "critical_diff_new": 0,
+      "undeclared_passthrough": 0,
+      "diffs": []
+    },
+    {
+      "date": "2026-03-07",
+      "critical_diff_new": 0,
+      "undeclared_passthrough": 0,
+      "diffs": []
+    },
+    {
+      "date": "2026-03-08",
+      "critical_diff_new": 0,
+      "undeclared_passthrough": 0,
+      "diffs": []
+    }
+  ]
+}
