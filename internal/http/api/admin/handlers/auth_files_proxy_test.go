@@ -145,6 +145,42 @@ func TestAuthFiles_Create_RejectsUnsupportedProxySchemeInContent(t *testing.T) {
 	}
 }
 
+func TestAuthFiles_Create_PreservesCopilotHeaderMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db := setupAuthFilesWhitelistDB(t)
+	h := NewAuthFileHandler(db)
+	router := gin.New()
+	router.POST("/v0/admin/auth-files", h.Create)
+
+	body := map[string]any{
+		"key": "auth-create-copilot-header-metadata",
+		"content": map[string]any{
+			"type":                "github-copilot",
+			"access_token":        "gh-at",
+			"editor_device_id":    "device-123",
+			"vscode_abexpcontext": "abexp-ctx",
+			"vscode_machineid":    "machine-456",
+		},
+	}
+	data, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/v0/admin/auth-files", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	var saved models.Auth
+	if errFind := db.Where("key = ?", "auth-create-copilot-header-metadata").First(&saved).Error; errFind != nil {
+		t.Fatalf("query saved row failed: %v", errFind)
+	}
+	content := decodeAuthFileProxyTestContent(t, saved.Content)
+	assertAuthFileProxyTestCopilotHeaderMetadata(t, content)
+}
+
 func TestAuthFiles_Update_RejectsUnsupportedProxySchemeInContent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -182,6 +218,53 @@ func TestAuthFiles_Update_RejectsUnsupportedProxySchemeInContent(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected status 400, got %d body=%s", w.Code, w.Body.String())
 	}
+}
+
+func TestAuthFiles_Update_PreservesCopilotHeaderMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db := setupAuthFilesWhitelistDB(t)
+	now := time.Now().UTC()
+	row := models.Auth{
+		Key:         "auth-update-copilot-header-metadata",
+		Name:        "auth-update-copilot-header-metadata",
+		ProxyURL:    "http://127.0.0.1:7890/",
+		Content:     datatypes.JSON([]byte(`{"type":"github-copilot","access_token":"gh-at","proxy_url":"http://127.0.0.1:7890/","editor_device_id":"device-123","vscode_abexpcontext":"abexp-ctx","vscode_machineid":"machine-456"}`)),
+		IsAvailable: true,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if errCreate := db.Create(&row).Error; errCreate != nil {
+		t.Fatalf("create auth row: %v", errCreate)
+	}
+
+	h := NewAuthFileHandler(db)
+	router := gin.New()
+	router.PUT("/v0/admin/auth-files/:id", h.Update)
+
+	body := map[string]any{
+		"proxy_url": "http://127.0.0.1:7891",
+	}
+	data, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/v0/admin/auth-files/%d", row.ID), bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	var saved models.Auth
+	if errFind := db.First(&saved, "id = ?", row.ID).Error; errFind != nil {
+		t.Fatalf("query saved row failed: %v", errFind)
+	}
+	if saved.ProxyURL != "http://127.0.0.1:7891/" {
+		t.Fatalf("expected updated proxy_url, got %q", saved.ProxyURL)
+	}
+	content := decodeAuthFileProxyTestContent(t, saved.Content)
+	assertAuthFileProxyTestCopilotHeaderMetadata(t, content)
+	assertAuthFileProxyTestContentString(t, content, "proxy_url", "http://127.0.0.1:7891/")
 }
 
 func TestAuthFiles_Update_EmptyProxyURLAlsoClearsContentProxyURL(t *testing.T) {
@@ -347,4 +430,64 @@ func TestAuthFiles_Import_AcceptsSupportedProxyScheme(t *testing.T) {
 	if saved.ProxyURL != "http://127.0.0.1:7890/" {
 		t.Fatalf("expected normalized proxy_url, got %q", saved.ProxyURL)
 	}
+}
+
+func TestAuthFiles_Import_PreservesCopilotHeaderMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	db := setupAuthFilesWhitelistDB(t)
+	h := NewAuthFileHandler(db)
+	router := gin.New()
+	router.POST("/v0/admin/auth-files/import", h.Import)
+
+	req := buildAuthFilesImportRequest(t, "/v0/admin/auth-files/import", map[string]string{
+		"copilot.json": `{"id":"auth-import-copilot-header-metadata","type":"github-copilot","access_token":"gh-at","editor_device_id":"device-123","vscode_abexpcontext":"abexp-ctx","vscode_machineid":"machine-456"}`,
+	})
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	resp := decodeImportAuthFilesResponse(t, w.Body.Bytes())
+	if resp.Imported != 1 || len(resp.Failed) != 0 {
+		t.Fatalf("unexpected import response: %+v", resp)
+	}
+
+	var saved models.Auth
+	if errFind := db.Where("key = ?", "auth-import-copilot-header-metadata").First(&saved).Error; errFind != nil {
+		t.Fatalf("query saved row failed: %v", errFind)
+	}
+	content := decodeAuthFileProxyTestContent(t, saved.Content)
+	assertAuthFileProxyTestCopilotHeaderMetadata(t, content)
+}
+
+func decodeAuthFileProxyTestContent(t *testing.T, raw datatypes.JSON) map[string]any {
+	t.Helper()
+
+	var content map[string]any
+	if errDecode := json.Unmarshal(raw, &content); errDecode != nil {
+		t.Fatalf("decode saved content failed: %v", errDecode)
+	}
+	return content
+}
+
+func assertAuthFileProxyTestContentString(t *testing.T, content map[string]any, key string, want string) {
+	t.Helper()
+
+	got, ok := content[key].(string)
+	if !ok {
+		t.Fatalf("expected %s to be string, got %T (%v)", key, content[key], content[key])
+	}
+	if got != want {
+		t.Fatalf("expected %s %q, got %q", key, want, got)
+	}
+}
+
+func assertAuthFileProxyTestCopilotHeaderMetadata(t *testing.T, content map[string]any) {
+	t.Helper()
+
+	assertAuthFileProxyTestContentString(t, content, "editor_device_id", "device-123")
+	assertAuthFileProxyTestContentString(t, content, "vscode_abexpcontext", "abexp-ctx")
+	assertAuthFileProxyTestContentString(t, content, "vscode_machineid", "machine-456")
 }

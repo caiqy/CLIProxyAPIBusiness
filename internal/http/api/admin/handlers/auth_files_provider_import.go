@@ -89,6 +89,13 @@ var commonImportAllowedFields = []string{
 	"session_key",
 }
 
+var githubCopilotImportAllowedFields = append(
+	append([]string{}, commonImportAllowedFields...),
+	"editor_device_id",
+	"vscode_abexpcontext",
+	"vscode_machineid",
+)
+
 var providerImportRules = map[string]providerImportRule{
 	"codex": {
 		allowedFields: commonImportAllowedFields,
@@ -119,7 +126,7 @@ var providerImportRules = map[string]providerImportRule{
 		validate:      validateProviderRequiresAccessToken,
 	},
 	"github-copilot": {
-		allowedFields: commonImportAllowedFields,
+		allowedFields: githubCopilotImportAllowedFields,
 		validate:      validateProviderRequiresAccessToken,
 	},
 	"kilo": {

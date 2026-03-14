@@ -159,6 +159,88 @@ func TestNormalizeProviderEntry_GitHubCopilot_AccessTokenRequired(t *testing.T) 
 	}
 }
 
+func TestNormalizeProviderEntry_GitHubCopilot_PreservesCopilotHeaderMetadataFromTopLevel(t *testing.T) {
+	t.Parallel()
+
+	raw := map[string]any{
+		"access_token":        "gh-at",
+		"editor_device_id":    "device-123",
+		"vscode_abexpcontext": "abexp-ctx",
+		"vscode_machineid":    "machine-456",
+	}
+
+	normalized, err := normalizeProviderEntry("github-copilot", raw)
+	if err != nil {
+		t.Fatalf("normalizeProviderEntry returned error: %v", err)
+	}
+
+	if got, _ := normalized["editor_device_id"].(string); got != "device-123" {
+		t.Fatalf("expected editor_device_id device-123, got %q", got)
+	}
+	if got, _ := normalized["vscode_abexpcontext"].(string); got != "abexp-ctx" {
+		t.Fatalf("expected vscode_abexpcontext abexp-ctx, got %q", got)
+	}
+	if got, _ := normalized["vscode_machineid"].(string); got != "machine-456" {
+		t.Fatalf("expected vscode_machineid machine-456, got %q", got)
+	}
+}
+
+func TestNormalizeProviderEntry_GitHubCopilot_PullsCopilotHeaderMetadataFromNestedMetadata(t *testing.T) {
+	t.Parallel()
+
+	raw := map[string]any{
+		"access_token": "gh-at",
+		"metadata": map[string]any{
+			"editor_device_id":    "device-123",
+			"vscode_abexpcontext": "abexp-ctx",
+			"vscode_machineid":    "machine-456",
+		},
+	}
+
+	normalized, err := normalizeProviderEntry("github-copilot", raw)
+	if err != nil {
+		t.Fatalf("normalizeProviderEntry returned error: %v", err)
+	}
+
+	if got, _ := normalized["editor_device_id"].(string); got != "device-123" {
+		t.Fatalf("expected editor_device_id device-123 from metadata, got %q", got)
+	}
+	if got, _ := normalized["vscode_abexpcontext"].(string); got != "abexp-ctx" {
+		t.Fatalf("expected vscode_abexpcontext abexp-ctx from metadata, got %q", got)
+	}
+	if got, _ := normalized["vscode_machineid"].(string); got != "machine-456" {
+		t.Fatalf("expected vscode_machineid machine-456 from metadata, got %q", got)
+	}
+}
+
+func TestNormalizeProviderEntry_Codex_DoesNotPreserveCopilotHeaderMetadata(t *testing.T) {
+	t.Parallel()
+
+	raw := map[string]any{
+		"access_token":     "token-123",
+		"editor_device_id": "device-top-level",
+		"metadata": map[string]any{
+			"vscode_abexpcontext": "abexp-from-metadata",
+			"vscode_machineid":    "machine-from-metadata",
+		},
+	}
+
+	normalized, err := normalizeProviderEntry("codex", raw)
+	if err != nil {
+		t.Fatalf("normalizeProviderEntry returned error: %v", err)
+	}
+
+	if _, ok := normalized["editor_device_id"]; ok {
+		t.Fatalf("expected codex to drop editor_device_id")
+	}
+	if _, ok := normalized["vscode_abexpcontext"]; ok {
+		t.Fatalf("expected codex to drop vscode_abexpcontext")
+	}
+	if _, ok := normalized["vscode_machineid"]; ok {
+		t.Fatalf("expected codex to drop vscode_machineid")
+	}
+}
+
 func TestNormalizeProviderEntry_Kilo_AccessTokenRequired(t *testing.T) {
 	t.Parallel()
 
