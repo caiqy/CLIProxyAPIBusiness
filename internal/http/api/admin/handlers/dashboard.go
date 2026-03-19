@@ -354,12 +354,14 @@ func (h *DashboardHandler) RecentTransactions(c *gin.Context) {
 		var authRows []models.Auth
 		if errAuths := h.db.WithContext(c.Request.Context()).
 			Model(&models.Auth{}).
-			Select("id", "name").
+			Select("id", "name", "key").
 			Where("id IN ?", authIDs).
 			Find(&authRows).Error; errAuths == nil {
 			for _, a := range authRows {
 				label := strings.TrimSpace(a.Name)
-				// Never fall back to a.Key here: it can be sensitive.
+				if label == "" {
+					label = strings.TrimSpace(a.Key)
+				}
 				authIDToLabel[a.ID] = label
 			}
 		}
